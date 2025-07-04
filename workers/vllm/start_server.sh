@@ -40,9 +40,6 @@ echo_var DEBUG_LOG
 echo_var PYWORKER_LOG
 echo_var MODEL_LOG
 
-env | grep _ >> /etc/environment;
-
-
 if [ ! -d "$ENV_PATH" ]
 then
     echo "setting up venv"

@@ -1,14 +1,14 @@
 import os
 import logging
-from typing import Union, Type
+from typing import Union, Type, ClassVar, Dict, Optional, Any, Tuple
 import dataclasses
 
 from aiohttp import web, ClientResponse
 
 from lib.backend import Backend, LogAction
-from lib.data_types import EndpointHandler
+from lib.data_types import EndpointHandler, AuthData
 from lib.server import start_server
-from .data_types import CompletionsData
+from .data_types import GenericData
 
 
 MODEL_SERVER_URL = "http://127.0.0.1:18000"
@@ -24,7 +24,6 @@ MODEL_SERVER_ERROR_LOG_MSGS = [
     "Error: ShardCannotStart",
 ]
 
-
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s[%(levelname)-5s] %(message)s",
@@ -34,42 +33,64 @@ log = logging.getLogger(__file__)
 
 
 @dataclasses.dataclass
-class GenerateHandler(EndpointHandler[CompletionsData]):
-
+class GenericHandler(EndpointHandler[GenericData]):
+    # These fields maintain compatibility with base class and current backend expectations
+   
+    # Class variable to store current payload for each request.
+    _current_payload: ClassVar[Optional[GenericData]] = None
+    
     @property
     def endpoint(self) -> str:
-        return "/v1/completions"
-
+        """Dynamic endpoint from current request payload"""
+        if GenericHandler._current_payload:
+            return GenericHandler._current_payload.endpoint
+    
     @property
     def healthcheck_endpoint(self) -> str:
         return f"{MODEL_SERVER_URL}/health"
 
     @classmethod
-    def payload_cls(cls) -> Type[CompletionsData]:
-        return CompletionsData
+    def payload_cls(cls) -> Type[GenericData]:
+        return GenericData
 
-    def make_benchmark_payload(self) -> CompletionsData:
-        return CompletionsData.for_test()
+    @classmethod  
+    def get_data_from_request(cls, req_data: Dict[str, Any]) -> Tuple[AuthData, GenericData]:
+        """Override to capture payload for dynamic endpoint"""
+        auth_data, payload = super().get_data_from_request(req_data)
+        
+        # Store payload in class variable for endpoint access
+        cls._current_payload = payload
+        
+        return auth_data, payload
+
+    def make_benchmark_payload(self) -> GenericData:
+        payload = GenericData.for_test()
+        GenericHandler._current_payload = payload  # Set ClassVar for endpoint property
+        return payload
 
     async def generate_client_response(
         self, client_request: web.Request, model_response: ClientResponse
     ) -> Union[web.Response, web.StreamResponse]:
-        _ = client_request
         match model_response.status:
             case 200:
-                log.debug("SUCCESS")
-                data = await model_response.json()
-                return web.json_response(data=data)
+                log.debug("Streaming response...")
+                res = web.StreamResponse()
+                res.content_type = "text/event-stream"
+                await res.prepare(client_request)
+                async for chunk in model_response.content:
+                    await res.write(chunk)
+                await res.write_eof()
+                log.debug("Done streaming response")
+                return res
             case code:
                 log.debug("SENDING RESPONSE: ERROR: unknown code")
                 return web.Response(status=code)
-
 
 backend = Backend(
     model_server_url=MODEL_SERVER_URL,
     model_log_file=os.environ["MODEL_LOG"],
     allow_parallel_requests=True,
-    benchmark_handler=GenerateHandler(benchmark_runs=3, benchmark_words=256),
+    benchmark_handler=GenericHandler(benchmark_runs=3, benchmark_words=256),
     log_actions=[
         *[(LogAction.ModelLoaded, info_msg) for info_msg in MODEL_SERVER_START_LOG_MSG],
         (LogAction.Info, '"message":"Download'),
@@ -80,13 +101,12 @@ backend = Backend(
     ],
 )
 
-
 async def handle_ping(_):
     return web.Response(body="pong")
 
 
 routes = [
-    web.post("/v1/completions", backend.create_handler(GenerateHandler())),
+    web.post("/generic", backend.create_handler(GenericHandler())),
     web.get("/ping", handle_ping),
 ]
 

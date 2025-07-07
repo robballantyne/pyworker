@@ -19,9 +19,8 @@ MODEL_SERVER_START_LOG_MSG = [
 ]
 
 MODEL_SERVER_ERROR_LOG_MSGS = [
-    "Error: WebserverFailed",
-    "Error: DownloadError",
-    "Error: ShardCannotStart",
+    "INFO exited: vllm",
+    "RuntimeError: Engine"
 ]
 
 logging.basicConfig(
@@ -70,18 +69,28 @@ class GenericHandler(EndpointHandler[GenericData]):
 
     async def generate_client_response(
         self, client_request: web.Request, model_response: ClientResponse
-    ) -> Union[web.Response, web.StreamResponse]:
+            ) -> Union[web.Response, web.StreamResponse]:
         match model_response.status:
             case 200:
-                log.debug("Streaming response...")
-                res = web.StreamResponse()
-                res.content_type = "text/event-stream"
-                await res.prepare(client_request)
-                async for chunk in model_response.content:
-                    await res.write(chunk)
-                await res.write_eof()
-                log.debug("Done streaming response")
-                return res
+                # Check if streaming is expected
+                if GenericHandler._current_payload and GenericHandler._current_payload.is_stream:
+                    log.debug("Streaming response...")
+                    res = web.StreamResponse()
+                    res.content_type = "text/event-stream"
+                    await res.prepare(client_request)
+                    async for chunk in model_response.content:
+                        await res.write(chunk)
+                    await res.write_eof()
+                    log.debug("Done streaming response")
+                    return res
+                else:
+                    log.debug("Non-streaming response...")
+                    content = await model_response.read()
+                    return web.Response(
+                        body=content,
+                        status=200,
+                        content_type=model_response.content_type
+                    )
             case code:
                 log.debug("SENDING RESPONSE: ERROR: unknown code")
                 return web.Response(status=code)
@@ -106,7 +115,7 @@ async def handle_ping(_):
 
 
 routes = [
-    web.post("/generic", backend.create_handler(GenericHandler())),
+    web.post("/proxy", backend.create_handler(GenericHandler())),
     web.get("/ping", handle_ping),
 ]
 

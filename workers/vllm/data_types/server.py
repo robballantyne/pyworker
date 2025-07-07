@@ -98,7 +98,7 @@ class GenericHandler(EndpointHandler[GenericData]):
     
     @property
     def healthcheck_endpoint(self) -> str:
-        return f"{os.environ.get("MODEL_SERVER", "127.0.0.1:8000")}/health"
+        return f"{os.environ.get("MODEL_SERVER_URL", "127.0.0.1:8000")}/health"
 
     @classmethod
     def payload_cls(cls) -> Type[GenericData]:

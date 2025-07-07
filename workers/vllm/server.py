@@ -23,8 +23,8 @@ logging.basicConfig(
 log = logging.getLogger(__file__)
 
 backend = Backend(
-    model_server_url=f"{os.environ.get("MODEL_SERVER_URL")}",
-    model_log_file=os.environ["MODEL_LOG"],
+    model_server_url=os.environ.get("MODEL_SERVER_URL"),
+    model_log_file=os.environ.get("MODEL_LOG"),
     allow_parallel_requests=True,
     benchmark_handler=GenericHandler(benchmark_runs=3, benchmark_words=256),
     log_actions=[

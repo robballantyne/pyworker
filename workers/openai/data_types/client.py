@@ -4,7 +4,7 @@ from typing import Optional, List, Dict, Any
 @dataclass
 class CompletionConfig:
     """Configuration for completion requests"""
-    model: str = "Qwen/Qwen2.5-3B-Instruct"
+    model: str
     prompt: str = "Hello"
     max_tokens: int = 10
     temperature: float = 0.7
@@ -16,7 +16,7 @@ class CompletionConfig:
 @dataclass
 class ChatCompletionConfig:
     """Configuration for chat completion requests"""
-    model: str = "Qwen/Qwen2.5-3B-Instruct"
+    model: str
     messages: list = None
     max_tokens: int = 250
     temperature: float = 0.7

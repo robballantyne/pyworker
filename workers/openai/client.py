@@ -19,7 +19,7 @@ log = logging.getLogger(__file__)
 class APIClient:
     """Lightweight client focused solely on API communication"""
     
-    WORKER_ENDPOINT = "/proxy"
+    # Remove the generic WORKER_ENDPOINT since we're now going direct
     DEFAULT_COST = 100
     DEFAULT_TIMEOUT = 4
     
@@ -70,29 +70,30 @@ class APIClient:
     
     def _make_request(self, payload: Dict[str, Any], endpoint: str, method: str = "POST", 
                      stream: bool = False) -> Union[Dict[str, Any], Iterator[str]]:
-        """Make request to worker endpoint"""
+        """Make request directly to the specific worker endpoint"""
         # Get worker URL and auth data
         message = self._get_worker_url()
         worker_url = message["url"]
         auth_data = self._create_auth_data(message)
         
-        # Prepare request data
-        request_payload = {
-            "input": payload,
-            "endpoint": endpoint,
-            "method": method
-        }
-        
         req_data = {
-            "payload": request_payload,
+            "payload": {
+                "input": payload
+            },
             "auth_data": auth_data
         }
         
-        url = urljoin(worker_url, self.WORKER_ENDPOINT)
-        log.debug(f"Making request to: {url}")
+        url = urljoin(worker_url, endpoint)
+        log.debug(f"Making direct request to: {url}")
         
-        # Make the request
-        response = requests.post(url, json=req_data, stream=stream)
+        # Make the request using the specified method
+        if method.upper() == "POST":
+            response = requests.post(url, json=req_data, stream=stream)
+        elif method.upper() == "GET":
+            response = requests.get(url, params=req_data, stream=stream)
+        else:
+            raise ValueError(f"Unsupported HTTP method: {method}")
+            
         response.raise_for_status()
         
         if stream:
@@ -207,8 +208,9 @@ class ToolManager:
 class APIDemo:
     """Demo and testing functionality for the API client"""
     
-    def __init__(self, client: APIClient, tool_manager: ToolManager = None):
+    def __init__(self, client: APIClient, model: str, tool_manager: ToolManager = None):
         self.client = client
+        self.model = model
         self.tool_manager = tool_manager or ToolManager()
     
     def test_tool_support(self) -> bool:
@@ -226,6 +228,7 @@ class APIDemo:
         }]
         
         config = ChatCompletionConfig(
+            model=self.model,
             messages=messages,
             max_tokens=10,
             tools=minimal_tool,
@@ -246,12 +249,13 @@ class APIDemo:
         print("=" * 60)
         
         config = CompletionConfig(
+            model=self.model,
             prompt="July 4th is",
             max_tokens=100,
             stream=False
         )
         
-        print(f"Testing completions with prompt: '{config.prompt}'")
+        print(f"Testing completions with model '{self.model}' and prompt: '{config.prompt}'")
         response = self.client.call_completions(config)
         
         if isinstance(response, dict):
@@ -267,12 +271,13 @@ class APIDemo:
         print("=" * 60)
         
         config = ChatCompletionConfig(
+            model=self.model,
             messages=[{"role": "user", "content": "Tell me about the Python programming language."}],
             max_tokens=500,
             stream=use_streaming,
         )
         
-        print("Testing chat completions...")
+        print(f"Testing chat completions with model '{self.model}'...")
         response = self.client.call_chat_completions(config)
         
         if use_streaming:
@@ -316,13 +321,14 @@ class APIDemo:
         ]
         
         config = ChatCompletionConfig(
+            model=self.model,
             messages=messages,
             max_tokens=300,
             tools=self.tool_manager.get_ls_tool_definition(),
             tool_choice="auto"
         )
         
-        print("Making initial request with tool...")
+        print(f"Making initial request with tool using model '{self.model}'...")
         response = self.client.call_chat_completions(config)
         
         if not isinstance(response, dict):
@@ -358,6 +364,7 @@ class APIDemo:
             
             # Get final response
             final_config = ChatCompletionConfig(
+                model=self.model,
                 messages=messages,
                 max_tokens=400,
                 tools=self.tool_manager.get_ls_tool_definition()
@@ -382,6 +389,7 @@ class APIDemo:
         print("=" * 60)
         print("INTERACTIVE STREAMING CHAT")
         print("=" * 60)
+        print(f"Using model: {self.model}")
         print("Type 'quit' to exit, 'clear' to clear history")
         print()
         
@@ -404,6 +412,7 @@ class APIDemo:
                 messages.append({"role": "user", "content": user_input})
                 
                 config = ChatCompletionConfig(
+                    model=self.model,
                     messages=messages,
                     max_tokens=500,
                     stream=True,
@@ -435,6 +444,13 @@ class APIDemo:
 def main():
     """Main function with CLI switches for different tests"""
     from lib.test_utils import test_args
+    
+    # Add mandatory model argument
+    test_args.add_argument(
+        "--model", 
+        required=True,
+        help="Model to use for requests (required)"
+    )
     
     # Add test mode arguments
     test_args.add_argument(
@@ -479,7 +495,7 @@ def main():
         print("  --chat-stream   : Test chat completions endpoint with streaming")
         print("  --tools         : Test function calling with ls tool (non-streaming)")
         print("  --interactive   : Start interactive streaming chat session")
-        print(f"\nExample: python {sys.argv[0]} --chat-stream -k YOUR_KEY -e YOUR_ENDPOINT")
+        print(f"\nExample: python {sys.argv[0]} --model gpt-3.5-turbo --chat-stream -k YOUR_KEY -e YOUR_ENDPOINT")
         sys.exit(1)
     elif selected_count > 1:
         print("Please specify exactly one test mode")
@@ -493,9 +509,12 @@ def main():
             server_url=args.server_url
         )
         
-        # Create tool manager and demo
+        # Create tool manager and demo (passing the model parameter)
         tool_manager = ToolManager()
-        demo = APIDemo(client, tool_manager)
+        demo = APIDemo(client, args.model, tool_manager)
+        
+        print(f"Using model: {args.model}")
+        print("=" * 60)
         
         # Run the selected test
         if args.completion:

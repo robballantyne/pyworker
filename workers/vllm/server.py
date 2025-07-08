@@ -5,14 +5,21 @@ from aiohttp import web
 from lib.backend import Backend, LogAction
 from lib.server import start_server
 
-# This line indicates that the vLLM inference server is listening
+# This line indicates that the inference server is listening
 MODEL_SERVER_START_LOG_MSG = [
-    'Application startup complete.'
+    'Application startup complete.', # vLLM
+    "Model successfully downloaded", # Ollama
+    '"message":"Connected","target":"text_generation_router"', # TGI
+    '"message":"Connected","target":"text_generation_router::server"', # TGI
 ]
 
 MODEL_SERVER_ERROR_LOG_MSGS = [
-    "INFO exited: vllm",
-    "RuntimeError: Engine"
+    "INFO exited: vllm", # vLLM
+    "RuntimeError: Engine", # vLLM
+    "Failed to download model", # Ollama
+    "Error: WebserverFailed", # TGI
+    "Error: DownloadError", # TGI
+    "Error: ShardCannotStart", #TGI
 ]
 
 logging.basicConfig(

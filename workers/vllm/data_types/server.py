@@ -70,7 +70,7 @@ class GenericHandler(EndpointHandler[GenericData], ABC):
     
     @property
     def healthcheck_endpoint(self) -> str:
-        return f"{os.environ.get('MODEL_SERVER_URL', '127.0.0.1:8000')}/health"
+        return os.environ.get('MODEL_HEALTH_ENDPOINT')
 
     @classmethod
     def payload_cls(cls) -> Type[GenericData]:
@@ -120,9 +120,9 @@ class CompletionsData(GenericData):
     @classmethod
     def for_test(cls) -> "CompletionsData":
         prompt = " ".join(random.choices(WORD_LIST, k=int(250)))
-        model = os.getenv("VLLM_MODEL")
+        model = os.environ.get("MODEL_NAME")
         if not model:
-            raise ValueError("VLLM_MODEL environment variable not set")
+            raise ValueError("MODEL_NAME environment variable not set")
         
         test_input = {
             "model": model,
@@ -152,9 +152,9 @@ class ChatCompletionsData(GenericData):
     @classmethod
     def for_test(cls) -> "ChatCompletionsData":
         prompt = " ".join(random.choices(WORD_LIST, k=int(250)))
-        model = os.getenv("VLLM_MODEL")
+        model = os.environ.get("MODEL_NAME")
         if not model:
-            raise ValueError("VLLM_MODEL environment variable not set")
+            raise ValueError("MODEL_NAME environment variable not set")
         
         # Chat completions use messages format instead of prompt
         test_input = {

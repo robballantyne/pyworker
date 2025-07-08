@@ -1,6 +1,6 @@
 import os
 import logging
-from .data_types.server import GenericHandler
+from .data_types.server import CompletionsHandler, ChatCompletionsHandler
 from aiohttp import web
 from lib.backend import Backend, LogAction
 from lib.server import start_server
@@ -26,7 +26,7 @@ backend = Backend(
     model_server_url=os.environ.get("MODEL_SERVER_URL"),
     model_log_file=os.environ.get("MODEL_LOG"),
     allow_parallel_requests=True,
-    benchmark_handler=GenericHandler(benchmark_runs=3, benchmark_words=256),
+    benchmark_handler=CompletionsHandler(benchmark_runs=3, benchmark_words=256),
     log_actions=[
         *[(LogAction.ModelLoaded, info_msg) for info_msg in MODEL_SERVER_START_LOG_MSG],
         (LogAction.Info, '"message":"Download'),
@@ -41,7 +41,8 @@ async def handle_ping(_):
     return web.Response(body="pong")
 
 routes = [
-    web.post("/proxy", backend.create_handler(GenericHandler())),
+    web.post("/v1/completions", backend.create_handler(CompletionsHandler())),
+    web.post("/v1/chat/completions", backend.create_handler(ChatCompletionsHandler())),
     web.get("/ping", handle_ping),
 ]
 

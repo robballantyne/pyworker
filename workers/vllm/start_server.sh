@@ -43,7 +43,9 @@ echo_var MODEL_LOG
 if [ ! -d "$ENV_PATH" ]
 then
     echo "setting up venv"
-
+    which pip > /dev/null 2>&1 || apt-get install -y python3-pip
+    which uv > /dev/null 2>&1 || pip install --no-cache-dir uv
+    
     uv venv "${ENV_PATH}"
     source "${ENV_PATH}/bin/activate"
 

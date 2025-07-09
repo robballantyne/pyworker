@@ -7,8 +7,8 @@ from lib.server import start_server
 
 # This line indicates that the inference server is listening
 MODEL_SERVER_START_LOG_MSG = [
-    'Application startup complete.', # vLLM
-    "Model successfully downloaded", # Ollama
+    "Application startup complete.", # vLLM
+    "llama runner started", # Ollama
     '"message":"Connected","target":"text_generation_router"', # TGI
     '"message":"Connected","target":"text_generation_router::server"', # TGI
 ]
@@ -16,7 +16,7 @@ MODEL_SERVER_START_LOG_MSG = [
 MODEL_SERVER_ERROR_LOG_MSGS = [
     "INFO exited: vllm", # vLLM
     "RuntimeError: Engine", # vLLM
-    "Failed to download model", # Ollama
+    "Error: pull model manifest:" # Ollama
     "Error: WebserverFailed", # TGI
     "Error: DownloadError", # TGI
     "Error: ShardCannotStart", #TGI

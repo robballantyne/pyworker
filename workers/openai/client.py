@@ -75,7 +75,8 @@ class APIClient:
                      stream: bool = False) -> Union[Dict[str, Any], Iterator[str]]:
         """Make request directly to the specific worker endpoint"""
         # Get worker URL and auth data
-        message = self._get_worker_url()
+        cost = payload.get('max_tokens')
+        message = self._get_worker_url(cost=cost)
         worker_url = message["url"]
         auth_data = self._create_auth_data(message)
         
@@ -85,9 +86,10 @@ class APIClient:
             },
             "auth_data": auth_data
         }
-        
+
         url = urljoin(worker_url, endpoint)
         log.debug(f"Making direct request to: {url}")
+        log.debug(f"Payload: {req_data}")
         
         # Make the request using the specified method
         if method.upper() == "POST":
@@ -125,6 +127,7 @@ class APIClient:
     
     def call_completions(self, config: CompletionConfig) -> Union[Dict[str, Any], Iterator[str]]:
         payload = config.to_dict()
+        
         return self._make_request(
             payload=payload,
             endpoint="/v1/completions",
@@ -133,6 +136,7 @@ class APIClient:
     
     def call_chat_completions(self, config: ChatCompletionConfig) -> Union[Dict[str, Any], Iterator[str]]:
         payload = config.to_dict()
+
         return self._make_request(
             payload=payload,
             endpoint="/v1/chat/completions",
@@ -189,9 +193,77 @@ class APIDemo:
         self.model = model
         self.tool_manager = tool_manager or ToolManager()
     
+    def handle_streaming_response(self, response_stream, show_reasoning: bool = True) -> str:
+        """
+        Handle streaming chat response and display all output.
+        """
+
+        full_response = ""
+        reasoning_content = ""
+        reasoning_started = False
+        content_started = False
+
+        for chunk in response_stream:
+            # Normalize the chunk
+            if isinstance(chunk, str):
+                chunk = chunk.strip()
+                if chunk.startswith("data: "):
+                    chunk = chunk[6:].strip()
+                if chunk in ["[DONE]", ""]:
+                    continue
+                try:
+                    parsed_chunk = json.loads(chunk)
+                except json.JSONDecodeError:
+                    continue
+            elif isinstance(chunk, dict):
+                parsed_chunk = chunk
+            else:
+                continue
+
+            # Parse delta from the chunk
+            choices = parsed_chunk.get("choices", [])
+            if not choices:
+                continue
+
+            delta = choices[0].get("delta", {})
+            reasoning_token = delta.get("reasoning_content", "")
+            content_token = delta.get("content", "")
+
+            # Print reasoning token if applicable
+            if show_reasoning and reasoning_token:
+                if not reasoning_started:
+                    print("\n🧠 Reasoning: ", end="", flush=True)
+                    reasoning_started = True
+                print(f"\033[90m{reasoning_token}\033[0m", end="", flush=True)
+                reasoning_content += reasoning_token
+
+            # Print content token
+            if content_token:
+                if not content_started:
+                    if show_reasoning and reasoning_started:
+                        print(f"\n💬 Response: ", end="", flush=True)
+                    else:
+                        print("Assistant: ", end="", flush=True)
+                    content_started = True
+                print(content_token, end="", flush=True)
+                full_response += content_token
+
+        print()  # Ensure newline after response
+
+        if show_reasoning:
+            if reasoning_started or content_started:
+                print("\nStreaming completed.")
+            if reasoning_started:
+                print(f"Reasoning tokens: {len(reasoning_content.split())}")
+            if content_started:
+                print(f"Response tokens: {len(full_response.split())}")
+
+        return full_response
+
+
     def test_tool_support(self) -> bool:
         """Test if the endpoint supports function calling"""
-        print("Testing endpoint tool calling support...")
+        log.debug("Testing endpoint tool calling support...")
         
         # Try a simple request with minimal tools to test support
         messages = [{"role": "user", "content": "Hello"}]
@@ -215,7 +287,7 @@ class APIDemo:
             response = self.client.call_chat_completions(config)
             return True
         except Exception as e:
-            print(f"Error: Endpoint does not support tool calling: {e}")
+            log.error(f"Error: Endpoint does not support tool calling: {e}")
             return False
     
     def demo_completions(self) -> None:
@@ -230,21 +302,18 @@ class APIDemo:
             stream=False
         )
         
-        print(f"Testing completions with model '{self.model}' and prompt: '{config.prompt}'")
+        log.info(f"Testing completions with model '{self.model}' and prompt: '{config.prompt}'")
         response = self.client.call_completions(config)
         
         if isinstance(response, dict):
             print("\nResponse:")
             print(json.dumps(response, indent=2))
         else:
-            print("Unexpected response format")
+            log.error("Unexpected response format")
     
     def demo_chat(self, use_streaming: bool = True) -> None:
         """
         Demo: test chat completions endpoint with optional streaming
-        
-        Some models/inference engines may incorrectly output their reasoning in non-standard format.
-        This is not handled here and will be displayed in the content response 
         """
         print("=" * 60)
         print(f"CHAT COMPLETIONS DEMO {'(STREAMING)' if use_streaming else '(NON-STREAMING)'}")
@@ -256,72 +325,18 @@ class APIDemo:
             stream=use_streaming,
         )
         
-        print(f"Testing chat completions with model '{self.model}'...")
+        log.info(f"Testing chat completions with model '{self.model}'...")
         response = self.client.call_chat_completions(config)
         
         if use_streaming:
-            print("\n🧠 Reasoning: ", end="", flush=True)
-            full_response = ""
-            reasoning_content = ""
-            content_started = False
-            
             try:
-                for chunk in response:
-                    # Parse the raw string chunk (SSE format)
-                    if isinstance(chunk, str):
-                        # Handle SSE format - remove "data: " prefix if present
-                        if chunk.startswith("data: "):
-                            chunk_data = chunk[6:].strip()
-                        else:
-                            chunk_data = chunk.strip()
-                        
-                        # Skip [DONE] markers and empty chunks
-                        if chunk_data in ["[DONE]", ""]:
-                            continue
-                            
-                        # Parse JSON
-                        try:
-                            parsed_chunk = json.loads(chunk_data)
-                        except json.JSONDecodeError:
-                            continue  # Skip malformed chunks
-                            
-                    elif isinstance(chunk, dict):
-                        # Already parsed
-                        parsed_chunk = chunk
-                    else:
-                        continue  # Skip unexpected types
-                    
-                    # Extract data from parsed chunk
-                    choices = parsed_chunk.get("choices", [])
-                    if choices:
-                        delta = choices[0].get("delta", {})
-                        
-                        # Extract reasoning content (your vLLM uses 'reasoning_content')
-                        reasoning_token = delta.get("reasoning_content", "")
-                        if reasoning_token:
-                            print(f"\033[90m{reasoning_token}\033[0m", end="", flush=True)  # Gray text
-                            reasoning_content += reasoning_token
-                        
-                        # Extract regular content
-                        content_token = delta.get("content", "")
-                        if content_token:
-                            if not content_started:
-                                print(f"\n💬 Response: ", end="", flush=True)
-                                content_started = True
-                            print(content_token, end="", flush=True)
-                            full_response += content_token
-                            
-                print()  # New line after streaming
+                self.handle_streaming_response(response, show_reasoning=True)
             except Exception as e:
-                print(f"\nError during streaming: {e}")
+                log.error(f"\nError during streaming: {e}")
                 import traceback
                 traceback.print_exc()
                 return
-
-            print(f"\nStreaming completed.")
-            print(f"Reasoning tokens: {len(reasoning_content.split()) if reasoning_content else 0}")
-            print(f"Response tokens: {len(full_response.split())}")
-                
+            
         else:
             if isinstance(response, dict):
                 choice = response.get("choices", [{}])[0]
@@ -336,7 +351,7 @@ class APIDemo:
                 print(f"\nFull Response:")
                 print(json.dumps(response, indent=2))
             else:
-                print("Unexpected response format")
+                log.error("Unexpected response format")
 
 
     
@@ -362,7 +377,7 @@ class APIDemo:
             tool_choice="auto"
         )
         
-        print(f"Making initial request with tool using model '{self.model}'...")
+        log.info(f"Making initial request with tool using model '{self.model}'...")
         response = self.client.call_chat_completions(config)
         
         if not isinstance(response, dict):
@@ -454,13 +469,7 @@ class APIDemo:
                 print("Assistant: ", end="", flush=True)
                 
                 response = self.client.call_chat_completions(config)
-                assistant_content = ""
-                
-                for token in response:
-                    print(token, end="", flush=True)
-                    assistant_content += token
-                
-                print("\n")
+                assistant_content = self.handle_streaming_response(response, show_reasoning=True)
                 
                 # Add assistant response to conversation history
                 messages.append({"role": "assistant", "content": assistant_content})
@@ -469,7 +478,7 @@ class APIDemo:
                 print("\n👋 Chat interrupted. Goodbye!")
                 break
             except Exception as e:
-                print(f"\nError: {e}")
+                log.error(f"\nError: {e}")
                 continue
 
 

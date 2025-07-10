@@ -13,6 +13,8 @@ Two environment variables are provided to help you configure the <INFERENCE_SERV
 | `MODEL_NAME` | `<MODEL_NAME>` | The model to load.  Also accepts [hf.co/repo/model](#) links |
 | `<ARGS_VAR>` | `<ARGS_VAL>` | Arguments to pass to the `<ARGS_RECEIVER>` command |
 
+This template has been configured to work with <MIN_VRAM> VRAM. Setting alternative models and server arguments will change the VRAM requirements. Check model cards and <INFERENCE_SERVER_DOCS> for guidance.
+
 ## Usage
 
 We have provided a demonstration client to help you implement this template into your own infrastructure

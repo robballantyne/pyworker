@@ -15,6 +15,9 @@ logging.basicConfig(
 )
 log = logging.getLogger(__file__)
 
+COMPLETIONS_PROMPT = "the capital of USA is"
+CHAT_PROMPT = "Think step by step: Tell me about the Python programming language."
+TOOLS_PROMPT = "Can you list the files in the current working directory and tell me what you see? What do you think this directory might be for?"
 
 class APIClient:
     """Lightweight client focused solely on API communication"""
@@ -106,36 +109,22 @@ class APIClient:
         try:
             for line in response.iter_lines(decode_unicode=True):
                 if line:
-                    # Handle Server-Sent Events format
                     if line.startswith("data: "):
-                        data_str = line[6:]  # Remove "data: " prefix
+                        data_str = line[6:]
                         if data_str.strip() == "[DONE]":
                             break
                         try:
                             data = json.loads(data_str)
-                            # Extract content from streaming response
-                            if "choices" in data and data["choices"]:
-                                choice = data["choices"][0]
-                                if "delta" in choice and "content" in choice["delta"]:
-                                    yield choice["delta"]["content"]
-                                elif "text" in choice:
-                                    yield choice["text"]
+                            yield data  # Yield the full chunk
                         except json.JSONDecodeError:
                             continue
         except Exception as e:
             log.error(f"Error handling streaming response: {e}")
             raise
+
     
     def call_completions(self, config: CompletionConfig) -> Union[Dict[str, Any], Iterator[str]]:
-        """Call completions endpoint"""
-        payload = {
-            "model": config.model,
-            "prompt": config.prompt,
-            "max_tokens": config.max_tokens,
-            "temperature": config.temperature,
-            "stream": config.stream
-        }
-        
+        payload = config.to_dict()
         return self._make_request(
             payload=payload,
             endpoint="/v1/completions",
@@ -143,20 +132,7 @@ class APIClient:
         )
     
     def call_chat_completions(self, config: ChatCompletionConfig) -> Union[Dict[str, Any], Iterator[str]]:
-        """Call chat completions endpoint"""
-        payload = {
-            "model": config.model,
-            "messages": config.messages,
-            "max_tokens": config.max_tokens,
-            "temperature": config.temperature,
-            "stream": config.stream
-        }
-        
-        # Add tools if provided
-        if config.tools:
-            payload["tools"] = config.tools
-            payload["tool_choice"] = config.tool_choice
-        
+        payload = config.to_dict()
         return self._make_request(
             payload=payload,
             endpoint="/v1/chat/completions",
@@ -250,8 +226,7 @@ class APIDemo:
         
         config = CompletionConfig(
             model=self.model,
-            prompt="July 4th is",
-            max_tokens=100,
+            prompt=COMPLETIONS_PROMPT,
             stream=False
         )
         
@@ -265,15 +240,19 @@ class APIDemo:
             print("Unexpected response format")
     
     def demo_chat(self, use_streaming: bool = True) -> None:
-        """Demo: test chat completions endpoint with optional streaming"""
+        """
+        Demo: test chat completions endpoint with optional streaming
+        
+        Some models/inference engines may incorrectly output their reasoning in non-standard format.
+        This is not handled here and will be displayed in the content response 
+        """
         print("=" * 60)
         print(f"CHAT COMPLETIONS DEMO {'(STREAMING)' if use_streaming else '(NON-STREAMING)'}")
         print("=" * 60)
         
         config = ChatCompletionConfig(
             model=self.model,
-            messages=[{"role": "user", "content": "Tell me about the Python programming language."}],
-            max_tokens=500,
+            messages=[{"role": "user", "content": CHAT_PROMPT}],
             stream=use_streaming,
         )
         
@@ -281,29 +260,85 @@ class APIDemo:
         response = self.client.call_chat_completions(config)
         
         if use_streaming:
-            print("\nAssistant (streaming): ", end="", flush=True)
+            print("\n🧠 Reasoning: ", end="", flush=True)
             full_response = ""
+            reasoning_content = ""
+            content_started = False
+            
             try:
-                for token in response:
-                    print(token, end="", flush=True)
-                    full_response += token
+                for chunk in response:
+                    # Parse the raw string chunk (SSE format)
+                    if isinstance(chunk, str):
+                        # Handle SSE format - remove "data: " prefix if present
+                        if chunk.startswith("data: "):
+                            chunk_data = chunk[6:].strip()
+                        else:
+                            chunk_data = chunk.strip()
+                        
+                        # Skip [DONE] markers and empty chunks
+                        if chunk_data in ["[DONE]", ""]:
+                            continue
+                            
+                        # Parse JSON
+                        try:
+                            parsed_chunk = json.loads(chunk_data)
+                        except json.JSONDecodeError:
+                            continue  # Skip malformed chunks
+                            
+                    elif isinstance(chunk, dict):
+                        # Already parsed
+                        parsed_chunk = chunk
+                    else:
+                        continue  # Skip unexpected types
+                    
+                    # Extract data from parsed chunk
+                    choices = parsed_chunk.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        
+                        # Extract reasoning content (your vLLM uses 'reasoning_content')
+                        reasoning_token = delta.get("reasoning_content", "")
+                        if reasoning_token:
+                            print(f"\033[90m{reasoning_token}\033[0m", end="", flush=True)  # Gray text
+                            reasoning_content += reasoning_token
+                        
+                        # Extract regular content
+                        content_token = delta.get("content", "")
+                        if content_token:
+                            if not content_started:
+                                print(f"\n💬 Response: ", end="", flush=True)
+                                content_started = True
+                            print(content_token, end="", flush=True)
+                            full_response += content_token
+                            
                 print()  # New line after streaming
             except Exception as e:
                 print(f"\nError during streaming: {e}")
+                import traceback
+                traceback.print_exc()
                 return
-            
-            print(f"\nStreaming completed. Total tokens received: {len(full_response.split())}")
+
+            print(f"\nStreaming completed.")
+            print(f"Reasoning tokens: {len(reasoning_content.split()) if reasoning_content else 0}")
+            print(f"Response tokens: {len(full_response.split())}")
+                
         else:
             if isinstance(response, dict):
                 choice = response.get("choices", [{}])[0]
                 message = choice.get("message", {})
                 content = message.get("content", "")
+                reasoning = message.get("reasoning_content", "") or message.get("reasoning", "")
                 
-                print(f"\nAssistant: {content}")
+                if reasoning:
+                    print(f"\n🧠 Reasoning: \033[90m{reasoning}\033[0m")
+                
+                print(f"\n💬 Assistant: {content}")
                 print(f"\nFull Response:")
                 print(json.dumps(response, indent=2))
             else:
                 print("Unexpected response format")
+
+
     
     def demo_ls_tool(self) -> None:
         """Demo: ask LLM to list files in the current directory and describe what it sees"""
@@ -317,13 +352,12 @@ class APIDemo:
         
         # Request with tool available
         messages = [
-            {"role": "user", "content": "Can you list the files in the current working directory and tell me what you see? What do you think this directory might be for?"}
+            {"role": "user", "content": TOOLS_PROMPT}
         ]
         
         config = ChatCompletionConfig(
             model=self.model,
             messages=messages,
-            max_tokens=300,
             tools=self.tool_manager.get_ls_tool_definition(),
             tool_choice="auto"
         )
@@ -366,7 +400,6 @@ class APIDemo:
             final_config = ChatCompletionConfig(
                 model=self.model,
                 messages=messages,
-                max_tokens=400,
                 tools=self.tool_manager.get_ls_tool_definition()
             )
             
@@ -414,7 +447,6 @@ class APIDemo:
                 config = ChatCompletionConfig(
                     model=self.model,
                     messages=messages,
-                    max_tokens=500,
                     stream=True,
                     temperature=0.7
                 )
@@ -495,7 +527,7 @@ def main():
         print("  --chat-stream   : Test chat completions endpoint with streaming")
         print("  --tools         : Test function calling with ls tool (non-streaming)")
         print("  --interactive   : Start interactive streaming chat session")
-        print(f"\nExample: python {sys.argv[0]} --model gpt-3.5-turbo --chat-stream -k YOUR_KEY -e YOUR_ENDPOINT")
+        print(f"\nExample: python {sys.argv[0]} --model Qwen/Qwen3-8B --chat-stream -k YOUR_KEY -e YOUR_ENDPOINT")
         sys.exit(1)
     elif selected_count > 1:
         print("Please specify exactly one test mode")

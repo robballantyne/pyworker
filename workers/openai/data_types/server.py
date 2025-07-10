@@ -127,7 +127,6 @@ class CompletionsData(GenericData):
         test_input = {
             "model": model,
             "prompt": prompt,
-            "max_tokens": 100,
             "temperature": 0.7
         }
         return cls(input=test_input)
@@ -160,7 +159,6 @@ class ChatCompletionsData(GenericData):
         test_input = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 100,
             "temperature": 0.7
         }
         return cls(input=test_input)

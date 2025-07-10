@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Optional, List, Dict, Any
 
 
@@ -46,7 +46,7 @@ class ChatCompletionConfig(SerializableDataclass):
     top_k: int = 20
     top_p: float = 0.4
     stream: bool = False
-    tools: Optional[List[Dict[str, Any]]] = None
+    tools: Optional[List[Dict[str, Any]]] = field(default_factory=list)
     tool_choice: str = "auto"
     
     def __post_init__(self):

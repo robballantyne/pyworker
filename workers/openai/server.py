@@ -16,8 +16,8 @@ MODEL_SERVER_START_LOG_MSG = [
 MODEL_SERVER_ERROR_LOG_MSGS = [
     "INFO exited: vllm", # vLLM
     "RuntimeError: Engine", # vLLM
-    "Error: pull model manifest:" # Ollama
-    "stalled; retrying" # Ollama
+    "Error: pull model manifest:", # Ollama
+    "stalled; retrying", # Ollama
     "Error: WebserverFailed", # TGI
     "Error: DownloadError", # TGI
     "Error: ShardCannotStart", #TGI

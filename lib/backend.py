@@ -218,9 +218,7 @@ class Backend:
     ) -> ClientResponse:
         api_payload = payload.generate_payload_json()
         log.debug(f"posting to endpoint: '{handler.endpoint}', payload: {api_payload}")
-        res = await self.session.post(url=handler.endpoint, json=api_payload)
-        log.debug(res)
-        return(res)
+        return await self.session.post(url=handler.endpoint, json=api_payload)
 
     def __check_signature(self, auth_data: AuthData) -> bool:
         if self.unsecured is True:
@@ -283,10 +281,16 @@ class Backend:
             for run in range(self.benchmark_handler.benchmark_runs + 1):
                 start = time.time()
                 payload = self.benchmark_handler.make_benchmark_payload()
+                log.debug("PAYLOAD FOR BENCHMARK:")
+                log.debug(payload)
+                log.debug("END PAYLOAD FOR BENCHMARK:")
                 res = await self.__call_api(
                     handler=self.benchmark_handler, payload=payload
                 )
                 data = await res.json()
+                log.debug("BENCHMARK RESULT:")
+                log.debug(data)
+                log.debug("END BENCHMARK RESULT:")
                 time_elapsed = time.time() - start
                 # first run triggers one-time loading of the model which is very slow, so we skip counting it
                 if run == 0:

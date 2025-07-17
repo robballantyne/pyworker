@@ -218,7 +218,9 @@ class Backend:
     ) -> ClientResponse:
         api_payload = payload.generate_payload_json()
         log.debug(f"posting to endpoint: '{handler.endpoint}', payload: {api_payload}")
-        return await self.session.post(url=handler.endpoint, json=api_payload)
+        res = await self.session.post(url=handler.endpoint, json=api_payload)
+        log.debug(res)
+        return(res)
 
     def __check_signature(self, auth_data: AuthData) -> bool:
         if self.unsecured is True:

@@ -21,26 +21,15 @@ TOOLS_PROMPT = "Can you list the files in the current working directory and tell
 
 class APIClient:
     """Lightweight client focused solely on API communication"""
-    
     # Remove the generic WORKER_ENDPOINT since we're now going direct
     DEFAULT_COST = 100
     DEFAULT_TIMEOUT = 4
     
-    def __init__(self, endpoint_group_name: str, api_key: str, server_url: str):
+    def __init__(self, endpoint_group_name: str, api_key: str, server_url: str, endpoint_api_key: str):
         self.endpoint_group_name = endpoint_group_name
         self.api_key = api_key
         self.server_url = server_url
-        self.endpoint_api_key = self._get_endpoint_api_key()
-    
-    def _get_endpoint_api_key(self) -> Optional[str]:
-        """Get the endpoint API key"""
-        endpoint_api_key = Endpoint.get_endpoint_api_key(
-            endpoint_name=self.endpoint_group_name,
-            account_api_key=self.api_key,
-        )
-        if not endpoint_api_key:
-            log.error(f"Failed to get API key for endpoint {self.endpoint_group_name}")
-        return endpoint_api_key
+        self.endpoint_api_key = endpoint_api_key
     
     def _get_worker_url(self, cost: int = DEFAULT_COST) -> Dict[str, Any]:
         """Get worker URL and auth data from routing service"""
@@ -543,11 +532,18 @@ def main():
         sys.exit(1)
     
     try:
+        endpoint_api_key = Endpoint.get_endpoint_api_key(
+            endpoint_name=args.endpoint_group_name,
+            account_api_key=args.api_key,
+            instance=args.instance
+        )
+
         # Create the core API client
         client = APIClient(
             endpoint_group_name=args.endpoint_group_name,
             api_key=args.api_key,
-            server_url=args.server_url
+            server_url=args.server_url,
+            endpoint_api_key=endpoint_api_key
         )
         
         # Create tool manager and demo (passing the model parameter)

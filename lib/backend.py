@@ -5,7 +5,7 @@ import base64
 import subprocess
 import dataclasses
 import logging
-from asyncio import sleep, gather, Semaphore
+from asyncio import wait, sleep, gather, Semaphore, FIRST_COMPLETED, create_task
 from typing import Tuple, Awaitable, NoReturn, List, Union, Callable, Optional
 from functools import cached_property
 from distutils.util import strtobool
@@ -123,6 +123,12 @@ class Backend:
             return web.json_response(dict(error="invalid JSON"), status=422)
         workload = payload.count_workload()
 
+        async def cancel_api_call_if_disconnected() -> web.Response:
+            await request.wait_for_disconnection()
+            log.debug(f"request with reqnum: {auth_data.reqnum} was canceled")
+            self.metrics._request_canceled(workload=workload, reqnum=auth_data.reqnum)
+            return web.Response(status=500)
+
         async def make_request() -> Union[web.Response, web.StreamResponse]:
             log.debug(f"got request, {auth_data.reqnum}")
             self.metrics._request_start(workload=workload, reqnum=auth_data.reqnum)
@@ -168,7 +174,15 @@ class Backend:
             return web.Response(status=401)
 
         try:
-            return await make_request()
+            done, pending = await wait(
+                [
+                    create_task(make_request()),
+                    create_task(cancel_api_call_if_disconnected()),
+                ],
+                return_when=FIRST_COMPLETED,
+            )
+            [task.cancel() for task in pending]
+            return done.pop().result()
         except Exception as e:
             log.debug(f"Exception in main handler loop {e}")
             return web.Response(status=500)

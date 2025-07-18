@@ -2,7 +2,7 @@ import os, json, random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from lib.data_types import EndpointHandler, ApiPayload, JsonDataException
-from typing import Union, Type, Dict, Any
+from typing import Union, Type, Dict, Any, Optional
 from aiohttp import web, ClientResponse
 import nltk
 import logging
@@ -10,41 +10,39 @@ import logging
 nltk.download("words")
 WORD_LIST = nltk.corpus.words.words()
 log = logging.getLogger(__name__)
-            
+
 """
 Generic dataclass accepts any dictionary in input.
 """
+
+
 @dataclass
 class GenericData(ApiPayload, ABC):
     input: Dict[str, Any]
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "GenericData":
-        return cls(
-            input=data["input"]
-        )
-    
+        return cls(input=data["input"])
+
     @classmethod
     def from_json_msg(cls, json_msg: Dict[str, Any]) -> "GenericData":
         errors = {}
-        
+
         # Validate required parameters
         required_params = ["input"]
         for param in required_params:
             if param not in json_msg:
                 errors[param] = "missing parameter"
-        
+
         if errors:
             raise JsonDataException(errors)
-        
+
         try:
             # Create clean data dict and delegate to from_dict
-            clean_data = {
-                "input": json_msg["input"]
-            }
-            
+            clean_data = {"input": json_msg["input"]}
+
             return cls.from_dict(clean_data)
-            
+
         except (json.JSONDecodeError, JsonDataException) as e:
             errors["parameters"] = str(e)
             raise JsonDataException(errors)
@@ -59,7 +57,8 @@ class GenericData(ApiPayload, ABC):
 
     def count_workload(self) -> int:
         return self.input.get("max_tokens", 0)
-    
+
+
 @dataclass
 class GenericHandler(EndpointHandler[GenericData], ABC):
 
@@ -67,10 +66,10 @@ class GenericHandler(EndpointHandler[GenericData], ABC):
     @abstractmethod
     def endpoint(self) -> str:
         pass
-    
+
     @property
-    def healthcheck_endpoint(self) -> str:
-        return os.environ.get('MODEL_HEALTH_ENDPOINT')
+    def healthcheck_endpoint(self) -> Optional[str]:
+        return os.environ.get("MODEL_HEALTH_ENDPOINT")
 
     @classmethod
     def payload_cls(cls) -> Type[GenericData]:
@@ -82,17 +81,17 @@ class GenericHandler(EndpointHandler[GenericData], ABC):
 
     async def generate_client_response(
         self, client_request: web.Request, model_response: ClientResponse
-            ) -> Union[web.Response, web.StreamResponse]:
+    ) -> Union[web.Response, web.StreamResponse]:
         match model_response.status:
             case 200:
                 # Check if the response is actually streaming based on response headers/content-type
                 is_streaming_response = (
-                    model_response.content_type == "text/event-stream" or
-                    model_response.content_type == "application/x-ndjson" or
-                    model_response.headers.get("Transfer-Encoding") == "chunked" or
-                    "stream" in model_response.content_type.lower()
+                    model_response.content_type == "text/event-stream"
+                    or model_response.content_type == "application/x-ndjson"
+                    or model_response.headers.get("Transfer-Encoding") == "chunked"
+                    or "stream" in model_response.content_type.lower()
                 )
-                
+
                 if is_streaming_response:
                     log.debug("Detected streaming response...")
                     res = web.StreamResponse()
@@ -109,11 +108,12 @@ class GenericHandler(EndpointHandler[GenericData], ABC):
                     return web.Response(
                         body=content,
                         status=200,
-                        content_type=model_response.content_type
+                        content_type=model_response.content_type,
                     )
             case code:
                 log.debug("SENDING RESPONSE: ERROR: unknown code")
                 return web.Response(status=code)
+
 
 @dataclass
 class CompletionsData(GenericData):
@@ -131,31 +131,33 @@ class CompletionsData(GenericData):
             "max_tokens": 500,
         }
         return cls(input=test_input)
-    
+
+
 @dataclass
 class CompletionsHandler(GenericHandler):
     @property
     def endpoint(self) -> str:
         return "/v1/completions"
-    
+
     @classmethod
     def payload_cls(cls) -> Type[CompletionsData]:
         return CompletionsData
-    
+
     def make_benchmark_payload(self) -> CompletionsData:
         return CompletionsData.for_test()
+
 
 @dataclass
 class ChatCompletionsData(GenericData):
     """Chat completions-specific data implementation"""
-    
+
     @classmethod
     def for_test(cls) -> "ChatCompletionsData":
         prompt = " ".join(random.choices(WORD_LIST, k=int(250)))
         model = os.environ.get("MODEL_NAME")
         if not model:
             raise ValueError("MODEL_NAME environment variable not set")
-        
+
         # Chat completions use messages format instead of prompt
         test_input = {
             "model": model,
@@ -164,16 +166,17 @@ class ChatCompletionsData(GenericData):
             "max_tokens": 500,
         }
         return cls(input=test_input)
-    
-@dataclass  
-class ChatCompletionsHandler(GenericHandler): 
+
+
+@dataclass
+class ChatCompletionsHandler(GenericHandler):
     @property
     def endpoint(self) -> str:
         return "/v1/chat/completions"
-    
+
     @classmethod
     def payload_cls(cls) -> Type[ChatCompletionsData]:
         return ChatCompletionsData
-        
+
     def make_benchmark_payload(self) -> ChatCompletionsData:
         return ChatCompletionsData.for_test()

@@ -129,21 +129,19 @@ echo "launching PyWorker server"
 [ -e "$MODEL_LOG" ] && cat "$MODEL_LOG" >> "$MODEL_LOG.old" && : > "$MODEL_LOG"
 
 
-# Run the worker in foreground so we can detect non-zero exit and report it
+set +e
 python3 -m "workers.$BACKEND.server" |& tee -a "$PYWORKER_LOG"
-STATUS=$?
+PY_STATUS=${PIPESTATUS[0]}
+set -e
 
-if [ $STATUS -ne 0 ]; then
-  echo "PyWorker exited with status $STATUS; notifying autoscaler..."
-
-  ERROR_MSG="PyWorker exited: code ${STATUS}"
+if [ "${PY_STATUS}" -ne 0 ]; then
+  echo "PyWorker exited with status ${PY_STATUS}; notifying autoscaler..."
+  ERROR_MSG="PyWorker exited: code ${PY_STATUS}"
   MTOKEN="${MASTER_TOKEN:-}"
   VERSION="${PYWORKER_VERSION:-0}"
 
-  # Comma-separated REPORT_ADDR is supported
   IFS=',' read -r -a REPORT_ADDRS <<< "${REPORT_ADDR}"
   for addr in "${REPORT_ADDRS[@]}"; do
-    # minimal, schema-compatible payload
     curl -sS -X POST -H 'Content-Type: application/json' \
       -d "$(cat <<JSON
 {
@@ -163,13 +161,13 @@ if [ $STATUS -ne 0 ]; then
   "working_request_idxs": [],
   "cur_capacity": 0,
   "max_capacity": 0,
-  "url": ""
+  "url": "${URL}"
 }
 JSON
 )" "${addr%/}/worker_status/" || true
   done
-  # Optional: exit non-zero to let the supervisor/container runtime handle restarts
-  exit $STATUS
+
+  exit "${PY_STATUS}"
 fi
 
 echo "launching PyWorker server done"

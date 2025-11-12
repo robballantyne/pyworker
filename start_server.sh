@@ -166,8 +166,6 @@ if [ "${PY_STATUS}" -ne 0 ]; then
 JSON
 )" "${addr%/}/worker_status/" || true
   done
-
-  exit "${PY_STATUS}"
 fi
 
 echo "launching PyWorker server done"

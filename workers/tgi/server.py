@@ -127,5 +127,4 @@ routes = [
 ]
 
 if __name__ == "__main__":
-    blips = blorps
     start_server(backend, routes)

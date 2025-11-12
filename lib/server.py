@@ -18,7 +18,6 @@ def start_server(backend: Backend, routes: List[web.RouteDef], **kwargs):
         use_ssl = os.environ.get("USE_SSL", "false") == "true"
         if use_ssl is True:
             ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-            raise Exception("Oh no the SSL cert is gone!")
             ssl_context.load_cert_chain(
                 certfile="/etc/instance.crt",
                 keyfile="/etc/instance.key",

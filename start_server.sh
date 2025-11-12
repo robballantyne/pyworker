@@ -128,5 +128,48 @@ echo "launching PyWorker server"
 # from the run prior to reboot. past logs are saved in $MODEL_LOG.old for debugging only
 [ -e "$MODEL_LOG" ] && cat "$MODEL_LOG" >> "$MODEL_LOG.old" && : > "$MODEL_LOG"
 
-(python3 -m "workers.$BACKEND.server" |& tee -a "$PYWORKER_LOG") &
+
+# Run the worker in foreground so we can detect non-zero exit and report it
+python3 -m "workers.$BACKEND.server" |& tee -a "$PYWORKER_LOG"
+STATUS=$?
+
+if [ $STATUS -ne 0 ]; then
+  echo "PyWorker exited with status $STATUS; notifying autoscaler..."
+
+  ERROR_MSG="PyWorker exited: code ${STATUS}"
+  MTOKEN="${MASTER_TOKEN:-}"
+  VERSION="${PYWORKER_VERSION:-0}"
+
+  # Comma-separated REPORT_ADDR is supported
+  IFS=',' read -r -a REPORT_ADDRS <<< "${REPORT_ADDR}"
+  for addr in "${REPORT_ADDRS[@]}"; do
+    # minimal, schema-compatible payload
+    curl -sS -X POST -H 'Content-Type: application/json' \
+      -d "$(cat <<JSON
+{
+  "id": ${CONTAINER_ID:-0},
+  "mtoken": "${MTOKEN}",
+  "version": "${VERSION}",
+  "loadtime": 0,
+  "new_load": 0,
+  "cur_load": 0,
+  "rej_load": 0,
+  "max_perf": 0,
+  "cur_perf": 0,
+  "error_msg": "${ERROR_MSG}",
+  "num_requests_working": 0,
+  "num_requests_recieved": 0,
+  "additional_disk_usage": 0,
+  "working_request_idxs": [],
+  "cur_capacity": 0,
+  "max_capacity": 0,
+  "url": ""
+}
+JSON
+)" "${addr%/}/worker_status/" || true
+  done
+  # Optional: exit non-zero to let the supervisor/container runtime handle restarts
+  exit $STATUS
+fi
+
 echo "launching PyWorker server done"

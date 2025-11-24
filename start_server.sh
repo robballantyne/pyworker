@@ -41,6 +41,14 @@ echo_var DEBUG_LOG
 echo_var PYWORKER_LOG
 echo_var MODEL_LOG
 
+# if instance is rebooted, we want to clear out the log file so pyworker doesn't read lines
+# from the run prior to reboot. past logs are saved in $MODEL_LOG.old for debugging only
+if [ -e "$MODEL_LOG" ]; then
+    echo "Rotating model log at $MODEL_LOG to $MODEL_LOG.old"
+    cat "$MODEL_LOG" >> "$MODEL_LOG.old" 
+    : > "$MODEL_LOG"
+fi
+
 # Populate /etc/environment with quoted values
 if ! grep -q "VAST" /etc/environment; then
     env -0 | grep -zEv "^(HOME=|SHLVL=)|CONDA" | while IFS= read -r -d '' line; do
@@ -124,9 +132,7 @@ cd "$SERVER_DIR"
 
 echo "launching PyWorker server"
 
-# if instance is rebooted, we want to clear out the log file so pyworker doesn't read lines
-# from the run prior to reboot. past logs are saved in $MODEL_LOG.old for debugging only
-[ -e "$MODEL_LOG" ] && cat "$MODEL_LOG" >> "$MODEL_LOG.old" && : > "$MODEL_LOG"
+# Model log line used to be here !
 
 (python3 -m "workers.$BACKEND.server" |& tee -a "$PYWORKER_LOG") &
 echo "launching PyWorker server done"

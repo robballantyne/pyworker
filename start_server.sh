@@ -132,7 +132,5 @@ cd "$SERVER_DIR"
 
 echo "launching PyWorker server"
 
-# Model log line used to be here !
-
 (python3 -m "workers.$BACKEND.server" |& tee -a "$PYWORKER_LOG") &
 echo "launching PyWorker server done"

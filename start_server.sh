@@ -41,6 +41,14 @@ echo_var DEBUG_LOG
 echo_var PYWORKER_LOG
 echo_var MODEL_LOG
 
+# if instance is rebooted, we want to clear out the log file so pyworker doesn't read lines
+# from the run prior to reboot. past logs are saved in $MODEL_LOG.old for debugging only
+if [ -e "$MODEL_LOG" ]; then
+    echo "Rotating model log at $MODEL_LOG to $MODEL_LOG.old"
+    cat "$MODEL_LOG" >> "$MODEL_LOG.old" 
+    : > "$MODEL_LOG"
+fi
+
 # Populate /etc/environment with quoted values
 if ! grep -q "VAST" /etc/environment; then
     env -0 | grep -zEv "^(HOME=|SHLVL=)|CONDA" | while IFS= read -r -d '' line; do
@@ -124,9 +132,43 @@ cd "$SERVER_DIR"
 
 echo "launching PyWorker server"
 
-# if instance is rebooted, we want to clear out the log file so pyworker doesn't read lines
-# from the run prior to reboot. past logs are saved in $MODEL_LOG.old for debugging only
-[ -e "$MODEL_LOG" ] && cat "$MODEL_LOG" >> "$MODEL_LOG.old" && : > "$MODEL_LOG"
+set +e
+python3 -m "workers.$BACKEND.server" |& tee -a "$PYWORKER_LOG"
+PY_STATUS=${PIPESTATUS[0]}
+set -e
 
-(python3 -m "workers.$BACKEND.server" |& tee -a "$PYWORKER_LOG") &
+if [ "${PY_STATUS}" -ne 0 ]; then
+  echo "PyWorker exited with status ${PY_STATUS}; notifying autoscaler..."
+  ERROR_MSG="PyWorker exited: code ${PY_STATUS}"
+  MTOKEN="${MASTER_TOKEN:-}"
+  VERSION="${PYWORKER_VERSION:-0}"
+
+  IFS=',' read -r -a REPORT_ADDRS <<< "${REPORT_ADDR}"
+  for addr in "${REPORT_ADDRS[@]}"; do
+    curl -sS -X POST -H 'Content-Type: application/json' \
+      -d "$(cat <<JSON
+{
+  "id": ${CONTAINER_ID:-0},
+  "mtoken": "${MTOKEN}",
+  "version": "${VERSION}",
+  "loadtime": 0,
+  "new_load": 0,
+  "cur_load": 0,
+  "rej_load": 0,
+  "max_perf": 0,
+  "cur_perf": 0,
+  "error_msg": "${ERROR_MSG}",
+  "num_requests_working": 0,
+  "num_requests_recieved": 0,
+  "additional_disk_usage": 0,
+  "working_request_idxs": [],
+  "cur_capacity": 0,
+  "max_capacity": 0,
+  "url": "${URL}"
+}
+JSON
+)" "${addr%/}/worker_status/" || true
+  done
+fi
+
 echo "launching PyWorker server done"

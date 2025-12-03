@@ -35,6 +35,7 @@ backend = Backend(
     model_server_url=os.environ["MODEL_SERVER_URL"],
     model_log_file=os.environ["MODEL_LOG"],
     allow_parallel_requests=True,
+    max_wait_time=600.0,
     benchmark_handler=CompletionsHandler(benchmark_runs=3, benchmark_words=256),
     log_actions=[
         *[(LogAction.ModelLoaded, info_msg) for info_msg in MODEL_SERVER_START_LOG_MSG],

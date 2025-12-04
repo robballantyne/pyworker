@@ -8,14 +8,13 @@ This is the base PyWorker for OpenAI compatible inference servers.  See the [Ser
 
 This worker is compatible with any backend API that properly implements the `/v1/completions` and `/v1/chat/completions` endpoints.  We currently have three templates you can choose from but you can also create your own without having to modify the PyWorker.
 
-- [vLLM](https://cloud.vast.ai/?ref_id=62897&creator_id=62897&name=vLLM%20%2B%20Qwen%2FQwen3-8B%20(Serverless)) (recommended)
+- [vLLM](https://cloud.vast.ai/?ref_id=62897&creator_id=62897&name=vLLM%20(Serverless)) (recommended)
 - [Ollama](https://cloud.vast.ai/?ref_id=62897&creator_id=62897&name=Ollama%20%2B%20Qwen3%3A32b%20(Serverless))
-- [HuggingFace TGI](https://cloud.vast.ai/?ref_id=62897&creator_id=62897&name=TGI%20%2B%20Qwen3-8B%20(Serverless))
 
 
 All of these templates can be configured via the template interface.  You may want to change the model or startup arguments, depending on the template you selected.
 
-2. Follow the [getting started guide](https://docs.vast.ai/serverless/getting-started) for help with configuring your serverless setup.  For testing, we recommend that you use the default options presented by the web interface.
+2. Follow the [getting started guide](https://docs.vast.ai/documentation/serverless/quickstart) for help with configuring your serverless setup.  For testing, we recommend that you use the default options presented by the web interface.
 
 ## Client Setup (Demo)
 

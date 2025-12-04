@@ -1,14 +1,104 @@
 # ComfyUI PyWorker
 
-This is the base PyWorker for ComfyUI. It provides a unified interface for running any ComfyUI workflow through a proxy-based architecture.
+This is the base PyWorker for ComfyUI. It provides a unified interface for running any ComfyUI workflow through a proxy-based architecture. See the [Serverless documentation](https://docs.vast.ai/serverless) for guides and how-to's.
 
-The cost for each request has a static value of `1`.  ComfyUI does not handle concurrent workloads and there is no current provision to load multiple instances of ComfyUI per worker node.
+The cost for each request has a static value of `1`. ComfyUI does not handle concurrent workloads and there is no current provision to load multiple instances of ComfyUI per worker node.
+
+## Instance Setup
+
+1. Pick a template
+
+- [ComfyUI (Serverless)](https://cloud.vast.ai/?ref_id=62897&creator_id=62897&name=ComfyUI%20(Serverless))
+
+2. Follow the [getting started guide](https://docs.vast.ai/documentation/serverless/quickstart) for help with configuring your serverless setup. For testing, we recommend that you use the default options presented by the web interface.
 
 ## Requirements
 
 This worker requires both [ComfyUI](https://github.com/comfyanonymous/ComfyUI) and [ComfyUI API Wrapper](https://github.com/ai-dock/comfyui-api-wrapper).
 
 A docker image is provided but you may use any if the above requirements are met.
+
+## Client
+
+The client demonstrates how to use the Vast Serverless SDK to generate images, save them locally, and optionally upload to S3-compatible storage.
+
+### Setup
+
+1. Clone the PyWorker repository to your local machine and install the necessary requirements for running the test client.
+
+```bash
+git clone https://github.com/vast-ai/pyworker
+cd pyworker
+pip install uv
+uv venv -p 3.12
+source .venv/bin/activate
+uv pip install -r requirements.txt
+```
+
+2. Set your API key:
+
+```bash
+export VAST_API_KEY=<your_api_key>
+```
+
+### Usage
+
+```bash
+# Default prompt
+python -m workers.comfyui-json.client
+
+# Custom prompt
+python -m workers.comfyui-json.client --prompt "a cat sitting on a rainbow"
+
+# With options
+python -m workers.comfyui-json.client --prompt "sunset" --width 1024 --height 1024 --steps 30
+
+# Using a custom workflow file
+python -m workers.comfyui-json.client --workflow my_workflow.json
+
+# With S3 upload
+python -m workers.comfyui-json.client --s3
+```
+
+### CLI Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--endpoint` | `my-comfyui-endpoint` | Vast endpoint name |
+| `--prompt` | (default) | Text prompt for image generation |
+| `--workflow` | (none) | Path to custom workflow JSON file |
+| `--width` | 512 | Image width in pixels |
+| `--height` | 512 | Image height in pixels |
+| `--steps` | 20 | Number of denoising steps |
+| `--seed` | (random) | Random seed for reproducibility |
+| `--s3` | (disabled) | Upload generated images to S3 |
+
+### Output
+
+Images are saved to `./generated_images/comfy_{seed}.png`.
+
+### S3 Upload (Optional)
+
+You can optionally upload generated images to an S3-compatible storage service (AWS S3, Cloudflare R2, Backblaze B2, etc.) by using the `--s3` flag.
+
+**1. Set environment variables:**
+
+```bash
+export S3_ENDPOINT_URL="https://your-account.r2.cloudflarestorage.com"
+export S3_BUCKET_NAME="my-bucket"
+export S3_ACCESS_KEY_ID="your-access-key-id"
+export S3_SECRET_ACCESS_KEY="your-secret-access-key"
+```
+
+**2. Run with S3 upload enabled:**
+
+```bash
+python -m workers.comfyui-json.client --prompt "a beautiful landscape" --s3
+```
+
+Images will be saved locally AND uploaded to `s3://{bucket}/comfyui/{filename}`.
+
+**Note:** Requires `boto3` (`pip install boto3`).
 
 ## Benchmarking
 
@@ -212,11 +302,3 @@ WEBHOOK_TIMEOUT=30                   # Webhook timeout in seconds
   }
 }
 ```
-
-## Client Libraries
-
-See the test client examples for implementation details on how to integrate with the ComfyUI worker.
-
----
-
-See Vast's serverless documentation for more details on how to use ComfyUI with autoscaler.

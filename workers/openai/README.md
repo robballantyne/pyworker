@@ -34,38 +34,20 @@ uv pip install -r requirements.txt
 
 Several examples have been provided in the client to help you get started with your own implementation.
 
-### Completions
-
-Call to `/v1/completions` with json response
+First, set your API key as an environment variable:
 
 ```bash
-python -m workers.openai.client -k <API_KEY> -e <ENDPOINT_NAME> --completion --model <MODEL_NAME>
+export VAST_API_KEY=<your_api_key>
 ```
 
-### Chat Completion (json)
-
-Call to `/v1/chat/completions` with json response
-
-```bash
-python -m workers.openai.client -k <API_KEY> -e <ENDPOINT_NAME> --chat --model <MODEL_NAME>
-```
+The `--model` and `--endpoint` flags are optional. If not provided, they default to `Qwen/Qwen3-8B` and `my-vllm-endpoint` respectively.
 
 ### Chat Completion (streaming)
 
 Call to `/v1/chat/completions` with streaming response
 
 ```bash
-python -m workers.openai.client -k <API_KEY> -e <ENDPOINT_NAME> --chat-stream --model <MODEL_NAME>
-```
-
-### Tool Use (json)
-
-Call to `/v1/chat/completions` with tool and json response.
-
-This test defines a simple tool which will list the contents of the local pyworker directory.  The output is then analysed by the model.
-
-```bash
-python -m workers.openai.client -k <API_KEY> -e <ENDPOINT_NAME> --tools --model <MODEL_NAME>
+python -m workers.openai.client --chat-stream --endpoint <ENDPOINT_NAME> --model <MODEL_NAME>
 ```
 
 ### Interactive Chat (streaming)
@@ -75,6 +57,32 @@ Interactive session with calls to `/v1/chat/completions`.
 Type `clear` to clear the chat history or `quit` to exit.
 
 ```bash
-python -m workers.openai.client -k <API_KEY> -e <ENDPOINT_NAME> --interactive --model <MODEL_NAME>
+python -m workers.openai.client --interactive --endpoint <ENDPOINT_NAME> --model <MODEL_NAME>
+```
+
+### Chat Completion (json)
+
+Call to `/v1/chat/completions` with json response
+
+```bash
+python -m workers.openai.client --chat --endpoint <ENDPOINT_NAME> --model <MODEL_NAME>
+```
+
+### Tool Use (json)
+
+Call to `/v1/chat/completions` with tool and json response.
+
+This test defines a simple tool which will list the contents of the local pyworker directory.  The output is then analysed by the model.
+
+```bash
+python -m workers.openai.client --tools --endpoint <ENDPOINT_NAME> --model <MODEL_NAME>
+```
+
+### Completions
+
+Call to `/v1/completions` with json response
+
+```bash
+python -m workers.openai.client --completion --endpoint <ENDPOINT_NAME> --model <MODEL_NAME>
 ```
 

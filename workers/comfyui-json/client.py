@@ -12,7 +12,7 @@ from vastai import Serverless
 
 # ---------------------- Config ----------------------
 DEFAULT_PROMPT = "a beautiful sunset over mountains, digital art, highly detailed"
-ENDPOINT_NAME = "Comfy-Prod"
+ENDPOINT_NAME = "my-comfyui-endpoint"
 DEFAULT_WIDTH = 512
 DEFAULT_HEIGHT = 512
 DEFAULT_STEPS = 20

@@ -3,16 +3,16 @@ import sys
 import json
 import uuid
 import random
-import base64
 import asyncio
 import logging
 import argparse
+import aiohttp
 
 from vastai import Serverless
 
 # ---------------------- Config ----------------------
 DEFAULT_PROMPT = "a beautiful sunset over mountains, digital art, highly detailed"
-ENDPOINT_NAME = "Comfy-Prod2"
+ENDPOINT_NAME = "my-comfyui-endpoint"
 DEFAULT_WIDTH = 512
 DEFAULT_HEIGHT = 512
 DEFAULT_STEPS = 20
@@ -74,128 +74,40 @@ class APIDemo:
         self.client = client
         self.endpoint_name = endpoint_name
 
-    def extract_images(self, response: dict) -> list:
-        """Extract image info from ComfyUI response"""
-        images = []
-        
-        # Check for output array (S3/webhook configured)
-        if "output" in response:
-            for item in response["output"]:
-                if "url" in item:
-                    images.append({"type": "url", "path": item["url"]})
-                elif "local_path" in item:
-                    images.append({"type": "local", "path": item["local_path"]})
-                elif "base64" in item:
-                    images.append({"type": "base64", "data": item["base64"]})
-        
-        # Check for comfyui_response format (default)
+    def extract_filename(self, response: dict) -> str | None:
+        """Extract the generated image filename from ComfyUI response"""
         if "comfyui_response" in response:
-            for prompt_id, data in response["comfyui_response"].items():
+            for data in response["comfyui_response"].values():
                 if isinstance(data, dict) and "outputs" in data:
-                    for node_id, node_output in data["outputs"].items():
-                        if "images" in node_output:
-                            for img in node_output["images"]:
-                                images.append({
-                                    "type": "remote",
-                                    "filename": img.get("filename"),
-                                    "subfolder": img.get("subfolder", ""),
-                                })
-        
-        return images
+                    for node_output in data["outputs"].values():
+                        if "images" in node_output and node_output["images"]:
+                            return node_output["images"][0].get("filename")
+        return None
 
-    async def save_images(self, images: list, worker_url: str, prefix: str = "comfy") -> list:
-        """Save images locally by fetching from remote server"""
+    async def save_image(self, worker_url: str, filename: str, local_name: str) -> str | None:
+        """Fetch and save image locally from the worker"""
         os.makedirs("generated_images", exist_ok=True)
-        saved = []
-        seen = set()
+        return await self._fetch_image(worker_url, filename, local_name)
 
-        for i, img in enumerate(images):
-            if img["type"] == "base64":
-                data = img["data"]
-                if data.startswith("data:"):
-                    data = data.split(",", 1)[-1]
-                path = f"generated_images/{prefix}_{i}.png"
-                with open(path, "wb") as f:
-                    f.write(base64.b64decode(data))
-                print(f"  💾 Saved: {path}")
-                saved.append(path)
-                
-            elif img["type"] == "url":
-                url = img["path"]
-                if url in seen:
-                    continue
-                seen.add(url)
-                try:
-                    import urllib.request
-                    path = f"generated_images/{prefix}_{len(saved)}.png"
-                    urllib.request.urlretrieve(url, path)
-                    print(f"  💾 Downloaded: {path}")
-                    saved.append(path)
-                except Exception as e:
-                    print(f"  🔗 URL: {url}")
-                    saved.append(url)
-                    
-            elif img["type"] == "local":
-                remote_path = img["path"]
-                if remote_path in seen:
-                    continue
-                seen.add(remote_path)
-                filename = os.path.basename(remote_path)
-                # Try to fetch via /view endpoint
-                local_path = await self._fetch_image(worker_url, filename, "", f"{prefix}_{len(saved)}.png")
-                if local_path:
-                    saved.append(local_path)
-                else:
-                    print(f"  📂 Remote: {remote_path}")
-                    saved.append(remote_path)
-                
-            elif img["type"] == "remote":
-                filename = img["filename"]
-                if filename in seen:
-                    continue
-                seen.add(filename)
-                subfolder = img.get("subfolder", "")
-                # Try to fetch via /view endpoint
-                local_path = await self._fetch_image(worker_url, filename, subfolder, f"{prefix}_{len(saved)}.png")
-                if local_path:
-                    saved.append(local_path)
-                else:
-                    print(f"  🖼️  Remote: {filename}")
-                    saved.append(filename)
-
-        return saved
-
-    async def _fetch_image(self, worker_url: str, filename: str, subfolder: str, local_name: str) -> str | None:
-        """Fetch image directly from worker's /view endpoint"""
+    async def _fetch_image(self, worker_url: str, filename: str, local_name: str) -> str | None:
+        """Fetch image from worker's /view endpoint and save locally"""
         if not worker_url:
-            print(f"  ⚠️  No worker URL available")
             return None
             
         try:
-            import aiohttp
-            
-            params = {"filename": filename, "type": "output"}
-            if subfolder:
-                params["subfolder"] = subfolder
-            
             url = f"{worker_url}/view"
-            print(f"  🔗 Fetching from: {url}")
+            params = {"filename": filename, "type": "output"}
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, params=params, ssl=False) as resp:
                     if resp.status == 200:
-                        raw_bytes = await resp.read()
                         path = f"generated_images/{local_name}"
                         with open(path, "wb") as f:
-                            f.write(raw_bytes)
+                            f.write(await resp.read())
                         print(f"  💾 Saved: {path}")
                         return path
-                    else:
-                        text = await resp.text()
-                        print(f"  ❌ HTTP {resp.status}: {text[:100]}")
-                        return None
-        except Exception as e:
-            print(f"  ❌ Fetch error: {e}")
+            return None
+        except Exception:
             return None
 
     async def demo_prompt(
@@ -234,18 +146,17 @@ class APIDemo:
         worker_url = response.get("url", "")
         print(f"Worker URL: {worker_url}")
 
-        # Extract and handle images
+        # Fetch and save image
         if "response" in response:
-            images = self.extract_images(response["response"])
-            if images:
-                print(f"\n📁 {len(images)} image(s) generated:")
-                await self.save_images(images, worker_url, prefix=f"comfy_{seed}")
+            filename = self.extract_filename(response["response"])
+            if filename:
+                path = await self.save_image(worker_url, filename, f"comfy_{seed}.png")
+                if not path:
+                    print(f"❌ Failed to fetch image")
             else:
-                print("\nNo images found in response")
-                print(json.dumps(response, indent=2, default=str)[:2000])
+                print("❌ No image in response")
         else:
-            print("\nUnexpected response format")
-            print(json.dumps(response, indent=2, default=str)[:2000])
+            print("❌ Unexpected response format")
 
     async def demo_workflow(self, workflow_file: str):
         """Demo: Generate using custom workflow file"""
@@ -274,16 +185,15 @@ class APIDemo:
         worker_url = response.get("url", "")
 
         if "response" in response:
-            images = self.extract_images(response["response"])
-            if images:
-                print(f"\n📁 {len(images)} image(s) generated:")
-                await self.save_images(images, worker_url, prefix="workflow")
+            filename = self.extract_filename(response["response"])
+            if filename:
+                path = await self.save_image(worker_url, filename, "workflow.png")
+                if not path:
+                    print(f"❌ Failed to fetch image")
             else:
-                print("\nNo images found in response")
-                print(json.dumps(response, indent=2, default=str)[:2000])
+                print("❌ No image in response")
         else:
-            print("\nUnexpected response format")
-            print(json.dumps(response, indent=2, default=str)[:2000])
+            print("❌ Unexpected response format")
 
 
 # ---------------------- CLI ----------------------

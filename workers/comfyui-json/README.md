@@ -1,14 +1,73 @@
 # ComfyUI PyWorker
 
-This is the base PyWorker for ComfyUI. It provides a unified interface for running any ComfyUI workflow through a proxy-based architecture.
+This is the base PyWorker for ComfyUI. It provides a unified interface for running any ComfyUI workflow through a proxy-based architecture. See the [Serverless documentation](https://docs.vast.ai/serverless) for guides and how-to's.
 
-The cost for each request has a static value of `1`.  ComfyUI does not handle concurrent workloads and there is no current provision to load multiple instances of ComfyUI per worker node.
+The cost for each request has a static value of `1`. ComfyUI does not handle concurrent workloads and there is no current provision to load multiple instances of ComfyUI per worker node.
+
+## Instance Setup
+
+1. Pick a template
+
+- [ComfyUI (Serverless)](https://cloud.vast.ai/?ref_id=62897&creator_id=62897&name=ComfyUI%20(Serverless))
+
+2. Follow the [getting started guide](https://docs.vast.ai/documentation/serverless/quickstart) for help with configuring your serverless setup. For testing, we recommend that you use the default options presented by the web interface.
 
 ## Requirements
 
 This worker requires both [ComfyUI](https://github.com/comfyanonymous/ComfyUI) and [ComfyUI API Wrapper](https://github.com/ai-dock/comfyui-api-wrapper).
 
 A docker image is provided but you may use any if the above requirements are met.
+
+## Client
+
+The client demonstrates how to use the Vast Serverless SDK to generate images and save them locally.
+
+### Setup
+
+1. Clone the PyWorker repository to your local machine and install the necessary requirements for running the test client.
+
+```bash
+git clone https://github.com/vast-ai/pyworker
+cd pyworker
+pip install uv
+uv venv -p 3.12
+source .venv/bin/activate
+uv pip install -r requirements.txt
+```
+
+2. Set your API key:
+
+```bash
+export VAST_API_KEY=<your_api_key>
+```
+
+### Usage
+
+```bash
+# Default prompt
+python -m workers.comfyui-json.client
+
+# Custom prompt
+python -m workers.comfyui-json.client --prompt "a cat sitting on a rainbow"
+
+# With options
+python -m workers.comfyui-json.client --prompt "sunset" --width 1024 --height 1024 --steps 30
+```
+
+### CLI Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--endpoint` | `my-comfyui-endpoint` | Vast endpoint name |
+| `--prompt` | (default) | Text prompt for image generation |
+| `--width` | 512 | Image width in pixels |
+| `--height` | 512 | Image height in pixels |
+| `--steps` | 20 | Number of denoising steps |
+| `--seed` | (random) | Random seed for reproducibility |
+
+### Output
+
+Images are saved to `./generated_images/comfy_{seed}.png`.
 
 ## Benchmarking
 
@@ -212,11 +271,3 @@ WEBHOOK_TIMEOUT=30                   # Webhook timeout in seconds
   }
 }
 ```
-
-## Client Libraries
-
-See the test client examples for implementation details on how to integrate with the ComfyUI worker.
-
----
-
-See Vast's serverless documentation for more details on how to use ComfyUI with autoscaler.

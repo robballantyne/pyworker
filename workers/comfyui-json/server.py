@@ -4,6 +4,7 @@ import dataclasses
 import base64
 from typing import Optional, Union, Type
 
+import aiohttp
 from aiohttp import web, ClientResponse
 
 from lib.backend import Backend, LogAction
@@ -108,8 +109,39 @@ async def handle_ping(_):
     return web.Response(body="pong")
 
 
+async def handle_view(request: web.Request) -> web.Response:
+    """Proxy /view requests to ComfyUI to fetch generated images"""
+    # Forward query params to ComfyUI
+    query_string = request.query_string
+    url = f"{MODEL_SERVER_URL}/view?{query_string}"
+    
+    log.debug(f"Proxying /view request to: {url}")
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    content = await resp.read()
+                    return web.Response(
+                        body=content,
+                        status=200,
+                        content_type=resp.content_type or "image/png"
+                    )
+                else:
+                    text = await resp.text()
+                    return web.Response(
+                        text=text,
+                        status=resp.status,
+                        content_type="text/plain"
+                    )
+    except Exception as e:
+        log.error(f"Error proxying /view: {e}")
+        return web.Response(text=str(e), status=500)
+
+
 routes = [
     web.post("/generate/sync", backend.create_handler(ComfyWorkflowHandler())),
+    web.get("/view", handle_view),
     web.get("/ping", handle_ping),
 ]
 

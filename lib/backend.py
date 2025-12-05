@@ -61,8 +61,12 @@ class Backend:
 
     backend_url: str
     benchmark_func: Optional[Callable[[str, ClientSession], Awaitable[float]]]
-    healthcheck_endpoint: Optional[str] = None
-    allow_parallel_requests: bool = True
+    healthcheck_endpoint: Optional[str] = dataclasses.field(
+        default_factory=lambda: os.environ.get("PYWORKER_HEALTHCHECK_ENDPOINT", "/health")
+    )
+    allow_parallel_requests: bool = dataclasses.field(
+        default_factory=lambda: os.environ.get("PYWORKER_ALLOW_PARALLEL", "true").lower() == "true"
+    )
     max_wait_time: float = dataclasses.field(
         default_factory=lambda: float(os.environ.get("PYWORKER_MAX_WAIT_TIME", "10.0"))
     )
@@ -464,9 +468,7 @@ class Backend:
             is_resume: If True, use shorter resume timeout (models already on disk).
                       If False, use longer initial timeout (models need to download).
         """
-        # Use configured endpoint or default to /health
-        endpoint = self.healthcheck_endpoint if self.healthcheck_endpoint else "/health"
-        url = f"{self.backend_url}{endpoint}"
+        url = f"{self.backend_url}{self.healthcheck_endpoint}"
 
         # Choose timeout based on whether this is initial boot or resume
         timeout = self.ready_timeout_resume if is_resume else self.ready_timeout_initial
@@ -499,10 +501,6 @@ class Backend:
 
     async def __healthcheck(self):
         """Periodic healthcheck of the backend with consecutive failure tracking"""
-        if self.healthcheck_endpoint is None:
-            log.debug("No healthcheck endpoint defined, skipping healthcheck")
-            return
-
         while True:
             await sleep(HEALTHCHECK_POLL_INTERVAL)
             if self.__start_healthcheck is False:

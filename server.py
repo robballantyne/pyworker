@@ -4,10 +4,10 @@ PyWorker - Universal serverless proxy for Vast.ai
 This server proxies requests to any backend API without custom transformation.
 It handles authentication, metrics tracking, and benchmarking.
 
-Environment variables:
-- PYWORKER_BACKEND_URL: URL of the backend server (e.g., http://localhost:8000)
+Environment variables (see lib/backend.py for full list):
+- PYWORKER_BACKEND_URL: URL of the backend server (default: http://localhost:8000)
 - PYWORKER_BENCHMARK: Python module path with benchmark function (e.g., benchmarks.openai_chat:benchmark)
-- PYWORKER_HEALTHCHECK_ENDPOINT: Optional healthcheck endpoint (e.g., /health)
+- PYWORKER_HEALTHCHECK_ENDPOINT: Healthcheck endpoint (default: /health)
 - PYWORKER_ALLOW_PARALLEL: Whether to allow parallel requests (default: true)
 - PYWORKER_MAX_WAIT_TIME: Maximum queue wait time before rejecting (default: 10.0)
 
@@ -75,22 +75,13 @@ def load_benchmark_function() -> Optional[Callable[[str, ClientSession], Awaitab
         return None
 
 
-# Load configuration from environment
-backend_url = os.environ.get("PYWORKER_BACKEND_URL", "http://localhost:8000")
-healthcheck_endpoint = os.environ.get("PYWORKER_HEALTHCHECK_ENDPOINT")
-allow_parallel = os.environ.get("PYWORKER_ALLOW_PARALLEL", "true").lower() == "true"
-max_wait_time = float(os.environ.get("PYWORKER_MAX_WAIT_TIME", "10.0"))
-
 # Load benchmark function
 benchmark_func = load_benchmark_function()
 
-# Create backend
+# Create backend - config options read from env vars with defaults in Backend class
 backend = Backend(
-    backend_url=backend_url,
+    backend_url=os.environ.get("PYWORKER_BACKEND_URL", "http://localhost:8000"),
     benchmark_func=benchmark_func,
-    healthcheck_endpoint=healthcheck_endpoint,
-    allow_parallel_requests=allow_parallel,
-    max_wait_time=max_wait_time,
 )
 
 
@@ -116,10 +107,10 @@ routes = [
 routes.append(web.get("/ping", handle_ping))
 
 if __name__ == "__main__":
-    log.info(f"Starting PyWorker for backend: {backend_url}")
-    log.info(f"Healthcheck endpoint: {healthcheck_endpoint or 'None'}")
-    log.info(f"Allow parallel requests: {allow_parallel}")
-    log.info(f"Max wait time: {max_wait_time}s")
+    log.info(f"Starting PyWorker for backend: {backend.backend_url}")
+    log.info(f"Healthcheck endpoint: {backend.healthcheck_endpoint}")
+    log.info(f"Allow parallel requests: {backend.allow_parallel_requests}")
+    log.info(f"Max wait time: {backend.max_wait_time}s")
     log.info(f"Benchmark: {os.environ.get('PYWORKER_BENCHMARK', 'None (worker will error on startup)')}")
 
     start_server(backend, routes)

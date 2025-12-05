@@ -15,7 +15,7 @@ log = logging.getLogger(__file__)
 def start_server(backend: Backend, routes: List[web.RouteDef], **kwargs):
     try:
         log.debug("getting certificate...")
-        use_ssl = os.environ.get("USE_SSL", "false") == "true"
+        use_ssl = os.environ.get("PYWORKER_USE_SSL", "false") == "true"
         if use_ssl is True:
             ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
             ssl_context.load_cert_chain(
@@ -34,7 +34,7 @@ def start_server(backend: Backend, routes: List[web.RouteDef], **kwargs):
             site = web.TCPSite(
                 runner,
                 ssl_context=ssl_context,
-                port=int(os.environ["WORKER_PORT"]),
+                port=int(os.environ["PYWORKER_WORKER_PORT"]),
                 **kwargs
             )
             await gather(site.start(), backend._start_tracking())
@@ -52,7 +52,7 @@ def start_server(backend: Backend, routes: List[web.RouteDef], **kwargs):
             try:
                 while True:
                     metrics._model_errored(err_msg)
-                    await metrics._Metrics__send_metrics_and_reset()
+                    await metrics._send_metrics_and_reset()
                     await asyncio.sleep(10)
             finally:
                 await metrics.aclose()

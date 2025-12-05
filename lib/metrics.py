@@ -11,16 +11,21 @@ from aiohttp import ClientSession, ClientTimeout, TCPConnector, ClientResponseEr
 from lib.data_types import AutoScalerData, SystemMetrics, ModelMetrics, RequestMetrics
 from typing import Awaitable, NoReturn, List
 
-METRICS_UPDATE_INTERVAL = 1
-DELETE_REQUESTS_INTERVAL = 1
+METRICS_UPDATE_INTERVAL = int(os.environ.get("PYWORKER_METRICS_UPDATE_INTERVAL", "1"))
+DELETE_REQUESTS_INTERVAL = int(os.environ.get("PYWORKER_DELETE_REQUESTS_INTERVAL", "1"))
+METRICS_RETRY_DELAY = int(os.environ.get("PYWORKER_METRICS_RETRY_DELAY", "2"))
+METRICS_MAX_RETRIES = int(os.environ.get("PYWORKER_METRICS_MAX_RETRIES", "3"))
+METRICS_TIMEOUT = int(os.environ.get("PYWORKER_METRICS_TIMEOUT", "10"))
+METRICS_CONNECTION_LIMIT = int(os.environ.get("PYWORKER_METRICS_CONNECTION_LIMIT", "8"))
+METRICS_CONNECTION_LIMIT_PER_HOST = int(os.environ.get("PYWORKER_METRICS_CONNECTION_LIMIT_PER_HOST", "4"))
 
 log = logging.getLogger(__file__)
 
 
 @cache
 def get_url() -> str:
-    use_ssl = os.environ.get("USE_SSL", "false") == "true"
-    worker_port = os.environ[f"VAST_TCP_PORT_{os.environ['WORKER_PORT']}"]
+    use_ssl = os.environ.get("PYWORKER_USE_SSL", "false") == "true"
+    worker_port = os.environ[f"VAST_TCP_PORT_{os.environ['PYWORKER_WORKER_PORT']}"]
     public_ip = os.environ["PUBLIC_IPADDR"]
     return f"http{'s' if use_ssl else ''}://{public_ip}:{worker_port}"
 
@@ -42,10 +47,17 @@ class Metrics:
     _session: ClientSession | None = field(default=None, init=False, repr=False)
 
     async def http(self) -> ClientSession:
+        """Get or create HTTP session for metrics reporting"""
         if self._session is None:
+            connector = TCPConnector(
+                limit=METRICS_CONNECTION_LIMIT,
+                limit_per_host=METRICS_CONNECTION_LIMIT_PER_HOST,
+                force_close=True,
+                enable_cleanup_closed=True
+            )
             self._session = ClientSession(
-                timeout=ClientTimeout(total=10),
-                connector=TCPConnector(limit=8, limit_per_host=4, force_close=True, enable_cleanup_closed=True)
+                timeout=ClientTimeout(total=METRICS_TIMEOUT),
+                connector=connector
             )
         return self._session
     
@@ -124,10 +136,10 @@ class Metrics:
             elapsed = time.time() - self.last_metric_update
             if self.system_metrics.model_is_loaded is False and elapsed >= 10:
                 log.debug(f"sending loading model metrics after {int(elapsed)}s wait")
-                await self.__send_metrics_and_reset()
+                await self._send_metrics_and_reset()
             elif self.update_pending or elapsed > 10:
                 log.debug(f"sending loaded model metrics after {int(elapsed)}s wait")
-                await self.__send_metrics_and_reset()
+                await self._send_metrics_and_reset()
 
     def _model_loaded(self, max_throughput: float) -> None:
         self.system_metrics.model_loading_time = (
@@ -148,32 +160,34 @@ class Metrics:
 
     #######################################Private#######################################
 
+    async def __post_delete_requests(self, report_addr: str, idxs: list[int], success_flag: bool) -> bool:
+        """Post delete requests to autoscaler"""
+        data = {
+            "worker_id": self.id,
+            "mtoken": self.mtoken,
+            "request_idxs": idxs,
+            "success": success_flag,
+        }
+        log.debug(
+            f"Deleting requests that {'succeeded' if success_flag else 'failed'}: {data['request_idxs']}"
+        )
+        full_path = report_addr.rstrip("/") + "/delete_requests/"
+        for attempt in range(1, METRICS_MAX_RETRIES + 1):
+            try:
+                session = await self.http()
+                async with session.post(full_path, json=data) as res:
+                    log.debug(f"delete_requests response: {res.status}")
+                    res.raise_for_status()
+                return True
+            except asyncio.TimeoutError:
+                log.debug("delete_requests timed out")
+            except (ClientResponseError, Exception) as e:
+                log.debug(f"delete_requests failed with error: {e}")
+            await asyncio.sleep(METRICS_RETRY_DELAY)
+            log.debug(f"retrying delete_request, attempt: {attempt}")
+        return False
+
     async def __send_delete_requests_and_reset(self):
-        async def post(report_addr: str, idxs: list[int], success_flag: bool) -> bool:
-            data = {
-                "worker_id": self.id,
-                "mtoken": self.mtoken,
-                "request_idxs": idxs,
-                "success": success_flag,
-            }
-            log.debug(
-                f"Deleting requests that {'succeeded' if success_flag else 'failed'}: {data['request_idxs']}"
-            )
-            full_path = report_addr.rstrip("/") + "/delete_requests/"
-            for attempt in range(1, 4):
-                try:
-                    session = await self.http()
-                    async with session.post(full_path, json=data) as res:
-                        log.debug(f"delete_requests response: {res.status}")
-                        res.raise_for_status()
-                    return True
-                except asyncio.TimeoutError:
-                    log.debug("delete_requests timed out")
-                except (ClientResponseError, Exception) as e:
-                    log.debug(f"delete_requests failed with error: {e}")
-                await asyncio.sleep(2)
-                log.debug(f"retrying delete_request, attempt: {attempt}")
-            return False
 
         # Take a snapshot of what we plan to send this tick.
         # New arrivals after this snapshot will remain in the queue for the next tick.
@@ -193,9 +207,9 @@ class Metrics:
             sent_failed  = True
 
             if success_idxs:
-                sent_success = await post(report_addr, success_idxs, True)
+                sent_success = await self.__post_delete_requests(report_addr, success_idxs, True)
             if failed_idxs:
-                sent_failed = await post(report_addr, failed_idxs, False)
+                sent_failed = await self.__post_delete_requests(report_addr, failed_idxs, False)
 
             if sent_success and sent_failed:
                 # Remove only the items we actually sent from the live queue.
@@ -207,74 +221,76 @@ class Metrics:
                 break
 
 
-    async def __send_metrics_and_reset(self):
+    def __compute_autoscaler_data(self, loadtime_snapshot: float) -> AutoScalerData:
+        """Compute autoscaler data from current metrics"""
+        return AutoScalerData(
+            id=self.id,
+            mtoken=self.mtoken,
+            version=self.version,
+            loadtime=(loadtime_snapshot or 0.0),
+            new_load=self.model_metrics.workload_processing,
+            cur_load=self.model_metrics.cur_load,
+            rej_load=self.model_metrics.workload_rejected,
+            max_perf=self.model_metrics.max_throughput,
+            cur_perf=self.model_metrics.workload_served,
+            error_msg=self.model_metrics.error_msg or "",
+            num_requests_working=len(self.model_metrics.requests_working),
+            num_requests_recieved=len(self.model_metrics.requests_recieved),
+            additional_disk_usage=self.system_metrics.additional_disk_usage,
+            working_request_idxs=self.model_metrics.working_request_idxs,
+            cur_capacity=0,
+            max_capacity=0,
+            url=self.url,
+        )
 
-        loadtime_snapshot = self.system_metrics.model_loading_time
+    async def __send_data_to_autoscaler(self, report_addr: str, loadtime_snapshot: float) -> bool:
+        """Send metrics data to a single autoscaler endpoint"""
+        data = self.__compute_autoscaler_data(loadtime_snapshot)
+        log_data = asdict(data)
 
-        def compute_autoscaler_data() -> AutoScalerData:
-            return AutoScalerData(
-                id=self.id,
-                mtoken=self.mtoken,
-                version=self.version,
-                loadtime=(loadtime_snapshot or 0.0), 
-                new_load=self.model_metrics.workload_processing,
-                cur_load=self.model_metrics.cur_load,
-                rej_load=self.model_metrics.workload_rejected,
-                max_perf=self.model_metrics.max_throughput,
-                cur_perf=self.model_metrics.workload_served,
-                error_msg=self.model_metrics.error_msg or "",
-                num_requests_working=len(self.model_metrics.requests_working),
-                num_requests_recieved=len(self.model_metrics.requests_recieved),
-                additional_disk_usage=self.system_metrics.additional_disk_usage,
-                working_request_idxs=self.model_metrics.working_request_idxs,
-                cur_capacity=0,
-                max_capacity=0,
-                url=self.url,
-            )
+        # Obfuscate token for logging
+        mtoken = log_data.get("mtoken")
+        if mtoken and len(mtoken) > 7:
+            log_data["mtoken"] = mtoken[:7] + "..."
+        elif mtoken:
+            log_data["mtoken"] = "*" * len(mtoken)
+        else:
+            log_data["mtoken"] = ""
 
-        async def send_data(report_addr: str) -> bool:
-            data = compute_autoscaler_data()
-            log_data = asdict(data)
-            def obfuscate(secret: str) -> str:
-                if secret is None:
-                    return ""
-                return secret[:7] + "..." if len(secret) > 7 else ("*" * len(secret))
-            
-            log_data["mtoken"] = obfuscate(log_data.get("mtoken"))
-            log.debug(
-                "\n".join(
-                    [
-                        "#" * 60,
-                        f"sending data to autoscaler",
-                        f"{json.dumps(log_data, indent=2)}",
-                        "#" * 60,
-                    ]
-                )
-            )
+        log.debug(
+            "\n".join([
+                "#" * 60,
+                f"sending data to autoscaler",
+                f"{json.dumps(log_data, indent=2)}",
+                "#" * 60,
+            ])
+        )
 
-            full_path = report_addr.rstrip("/") + "/worker_status/"
-            for attempt in range(1, 4):
-                try:
-                    session = await self.http()
-                    async with session.post(full_path, json=asdict(data)) as res:
-                        res.raise_for_status()
-                    return True
-                except asyncio.TimeoutError:
-                    log.debug(f"autoscaler status update timed out")
-                except (ClientResponseError, Exception)  as e:
-                    log.debug(f"autoscaler status update failed with error: {e}")
-                await asyncio.sleep(2)
-                log.debug(f"retrying autoscaler status update, attempt: {attempt}")
-            log.debug(f"failed to send update through {report_addr}")
-            return False
+        full_path = report_addr.rstrip("/") + "/worker_status/"
+        for attempt in range(1, METRICS_MAX_RETRIES + 1):
+            try:
+                session = await self.http()
+                async with session.post(full_path, json=asdict(data)) as res:
+                    res.raise_for_status()
+                return True
+            except asyncio.TimeoutError:
+                log.debug(f"autoscaler status update timed out")
+            except (ClientResponseError, Exception)  as e:
+                log.debug(f"autoscaler status update failed with error: {e}")
+            await asyncio.sleep(METRICS_RETRY_DELAY)
+            log.debug(f"retrying autoscaler status update, attempt: {attempt}")
+        log.debug(f"failed to send update through {report_addr}")
+        return False
 
-        ###########
+    async def _send_metrics_and_reset(self):
+        """Send metrics to autoscaler and reset counters"""
+        loadtime_snapshot = self.system_metrics.model_loading_time or 0.0
 
         self.system_metrics.update_disk_usage()
 
         sent = False
         for report_addr in self.report_addr:
-            if await send_data(report_addr):
+            if await self.__send_data_to_autoscaler(report_addr, loadtime_snapshot):
                 sent = True
                 break
 

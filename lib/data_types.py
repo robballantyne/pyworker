@@ -2,18 +2,10 @@ import time
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Union, Tuple, Optional, Set, TypeVar, Generic, Type, Awaitable
-from aiohttp import web, ClientResponse
+from typing import Dict, Any, Optional, Set, Union
 import inspect
 
 import psutil
-
-
-"""
-type variable representing an incoming payload to pyworker that will used to calculate load and will then
-be forwarded to the model
-"""
 
 log = logging.getLogger(__file__)
 
@@ -23,49 +15,11 @@ class JsonDataException(Exception):
         self.message = json_msg
 
 
-ApiPayload_T = TypeVar("ApiPayload_T", bound="ApiPayload")
-
-
-@dataclass
-class ApiPayload(ABC):
-
-    @classmethod
-    @abstractmethod
-    def for_test(cls: Type[ApiPayload_T]) -> ApiPayload_T:
-        """defines how create a payload for load testing"""
-        pass
-
-    @abstractmethod
-    def generate_payload_json(self) -> Dict[str, Any]:
-        """defines how to convert an ApiPayload to JSON that will be sent to model API"""
-        pass
-
-    @abstractmethod
-    def count_workload(self) -> float:
-        """defines how to calculate workload for a payload"""
-        pass
-
-    @classmethod
-    @abstractmethod
-    def from_json_msg(
-        cls: Type[ApiPayload_T], json_msg: Dict[str, Any]
-    ) -> ApiPayload_T:
-        """
-        defines how to create an API payload from a JSON message,
-        it should throw an JsonDataException if there are issues with some fields
-        or they are missing in the format of
-        {
-            "field": "error msg"
-        }
-        """
-        pass
-
-
 @dataclass
 class AuthData:
     """data used to authenticate requester"""
 
-    cost: str
+    cost: Union[str, float, int]  # Can be string or number (autoscaler sends as number)
     endpoint: str
     reqnum: int
     request_idx: int
@@ -87,78 +41,6 @@ class AuthData:
                 if k in inspect.signature(cls).parameters
             }
         )
-
-
-@dataclass
-class EndpointHandler(ABC, Generic[ApiPayload_T]):
-    """
-    Each model endpoint will have a handler responsible for counting workload from the incoming ApiPayload
-    and converting it to json to be forwarded to model API
-    """
-
-    benchmark_runs: int = 8
-    benchmark_words: int = 100
-
-    @property
-    @abstractmethod
-    def endpoint(self) -> str:
-        """the endpoint on the model API"""
-        pass
-
-    @property
-    @abstractmethod
-    def healthcheck_endpoint(self) -> Optional[str]:
-        """the endpoint on the model API that is used for healthchecks"""
-        pass
-
-    @classmethod
-    @abstractmethod
-    def payload_cls(cls) -> Type[ApiPayload_T]:
-        """ApiPayload class"""
-        pass
-
-    @abstractmethod
-    def make_benchmark_payload(self) -> ApiPayload_T:
-        """defines how to create an ApiPayload for benchmarking."""
-        pass
-
-    @abstractmethod
-    async def generate_client_response(
-        self, client_request: web.Request, model_response: ClientResponse
-    ) -> Union[web.Response, web.StreamResponse]:
-        """
-        defines how to convert a model API response to a response to PyWorker client
-        """
-        pass
-
-    @classmethod
-    def get_data_from_request(
-        cls, req_data: Dict[str, Any]
-    ) -> Tuple[AuthData, ApiPayload_T]:
-        errors = {}
-        auth_data: Optional[AuthData] = None
-        payload: Optional[ApiPayload_T] = None
-        try:
-            if "auth_data" in req_data:
-                auth_data = AuthData.from_json_msg(req_data["auth_data"])
-            else:
-                errors["auth_data"] = "field missing"
-        except JsonDataException as e:
-            errors["auth_data"] = e.message
-        try:
-            if "payload" in req_data:
-                payload_cls = cls.payload_cls()
-                payload = payload_cls.from_json_msg(req_data["payload"])
-            else:
-                errors["payload"] = "field missing"
-        except JsonDataException as e:
-            errors["payload"] = e.message
-        if errors:
-            raise JsonDataException(errors)
-        if auth_data and payload:
-            return (auth_data, payload)
-        else:
-            raise Exception("error deserializing request data")
 
 
 @dataclass
@@ -206,17 +88,6 @@ class RequestMetrics:
     workload: float
     status: str
     success: bool = False
-
-@dataclass
-class BenchmarkResult:
-    request_idx: int
-    workload: float
-    task: Awaitable[ClientResponse]
-    response: Optional[ClientResponse] = None
-
-    @property
-    def is_successful(self) -> bool:
-        return self.response is not None and self.response.status == 200
 
 @dataclass
 class ModelMetrics:
@@ -302,23 +173,3 @@ class AutoScalerData:
     additional_disk_usage: float
     working_request_idxs: list[int]
     url: str
-
-
-class LogAction(Enum):
-    """
-    These actions tell the backend what a log value means, for example:
-    actions [
-        # this marks the model server as loaded
-        (LogAction.ModelLoaded, "Starting server"),
-        # these mark the model server as errored
-        (LogAction.ModelError, "Exception loading model"),
-        (LogAction.ModelError, "Server failed to bind to port"),
-        # this tells the backend to print any logs containing the string into its own logs
-        # which are visible in the vast console instance logs
-        (LogAction.Info, "Starting model download"),
-    ]
-    """
-
-    ModelLoaded = 1
-    ModelError = 2
-    Info = 3

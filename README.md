@@ -1,90 +1,154 @@
-# Vast PyWorker
+# PyWorker - Universal Serverless Proxy for Vast.ai
 
-Vast PyWorker is a Python web server designed to run alongside a LLM or image generation models running on vast,
-enabling autoscaler integration.
-It serves as the primary entry point for API requests, forwarding them to the model's API hosted on the
-same instance. Additionally, it monitors performance metrics and estimates current workload based on factors
-such as the number of tokens processed for LLMs or image resolution and steps for image generation models,
-reporting these metrics to the autoscaler.
+Lightweight HTTP proxy enabling serverless compute on Vast.ai for any backend API.
 
-## Project Structure
+## Features
 
-*   `lib/`: Contains the core PyWorker framework code (server logic, data types, metrics).
-*   `workers/`: Contains specific implementations (PyWorkers) for different model servers. Each subdirectory represents a worker for a particular model type.
+- **Universal** - Works with any HTTP API (OpenAI, vLLM, TGI, Ollama, ComfyUI)
+- **Zero boilerplate** - No custom handlers or transformations
+- **Streaming** - Automatic detection and pass-through
+- **All HTTP methods** - GET, POST, PUT, PATCH, DELETE
 
-## Getting Started
+## Quick Start
 
-1.  **Install Dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-    You may also need `pyright` for type checking:
-    ```bash
-    sudo npm install -g pyright
-    # or use your preferred method to install pyright
-    ```
-
-2.  **Configure Environment:** Set any necessary environment variables (e.g., `MODEL_LOG` path, API keys if needed by your worker).
-
-3.  **Run the Server:** Use the provided script. You'll need to specify which worker to run.
-    ```bash
-    # Example for hello_world worker (assuming MODEL_LOG is set)
-    ./start_server.sh workers.hello_world.server
-    ```
-    Replace `workers.hello_world.server` with the path to the `server.py` module of the worker you want to run.
-
-## How to Use
-
-### Using Existing Workers
-
-If you are using a Vast.ai template that includes PyWorker integration (marked as autoscaler compatible), it should work out of the box. The template will typically start the appropriate PyWorker server automatically. Here's a few:
-
-*   **vLLM:** [Vast.ai Template](https://cloud.vast.ai?ref_id=62897&template_id=63ae93902bf3978bea033782592b784d)
-*   **TGI (Text Generation Inference):** [Vast.ai Template](https://cloud.vast.ai?ref_id=62897&template_id=6fa6bd5bdf5f0df63db80e40b086037d)
-*   **ComfyUI:** [Vast.ai Template](https://cloud.vast.ai?ref_id=62897&template_id=e6748878ba688e765e3e9fca29541938)
-
-Currently available workers:
-*   `openai`: A simple example worker for a basic vLLM server.
-*   `comfyui`: A worker for the ComfyUI image generation backend.
-*   `tgi`: A worker for the Text Generation Inference backend.
-
-### Implementing a New Worker
-
-To integrate PyWorker with a model server not already supported, you need to create a new worker implementation under the `workers/` directory. Follow these general steps:
-
-1.  **Create Worker Directory:** Add a new directory under `workers/` (e.g., `workers/my_model/`).
-2.  **Define Data Types (`data_types.py`):**
-    *   Create a class inheriting from `lib.data_types.ApiPayload`.
-    *   Implement methods like `for_test`, `generate_payload_json`, `count_workload`, and `from_json_msg` to handle request data, testing, and workload calculation specific to your model's API.
-3.  **Implement Endpoint Handlers (`server.py`):**
-    *   For each model API endpoint you want PyWorker to proxy, create a class inheriting from `lib.data_types.EndpointHandler`.
-    *   Implement methods like `endpoint`, `payload_cls`, `generate_payload_json`, `make_benchmark_payload` (for one handler), and `generate_client_response`.
-    *   Instantiate `lib.backend.Backend` with your model server details, log file path, benchmark handler, and log actions.
-    *   Define `aiohttp` routes, mapping paths to your handlers using `backend.create_handler()`.
-    *   Use `lib.server.start_server` to run the application.
-4.  **Add `__init__.py`:** Create an empty `__init__.py` file in your worker directory.
-5.  **(Optional) Add Load Testing (`test_load.py`):** Create a script using `lib.test_harness.run` to test your worker against a Vast.ai endpoint group.
-6.  **(Optional) Add Client Example (`client.py`):** Provide a script demonstrating how to call your worker's endpoints.
-
-**For a detailed walkthrough, refer to the `hello_world` example:** [workers/hello_world/README.md](workers/hello_world/README.md)
-
-
-**Type Hinting:** It is strongly recommended to use strict type hinting throughout your implementation. Use `pyright` to check for type errors.
-
-## Testing Your Worker
-
-If you implement a `test_load.py` script for your worker, you can use it to load test a Vast.ai endpoint group running your instance image.
+### On Vast.ai
 
 ```bash
-# Example for hello_world worker
-python3 -m workers.hello_world.test_load -n 1000 -rps 0.5 -k "$API_KEY" -e "$ENDPOINT_GROUP_NAME"
+export PYWORKER_BACKEND_URL="http://localhost:8000"
+export PYWORKER_BENCHMARK="benchmarks.openai_chat:benchmark"
+./start_server.sh
 ```
 
-Replace `workers.hello_world.test_load` with the path to your worker's test script and provide your Vast.ai API Key (`-k`) and the target Endpoint Group Name (`-e`). Adjust the number of requests (`-n`) and requests per second (`-rps`) as needed.
+### Local Development
 
-## Community & Support
+```bash
+export PYWORKER_BACKEND_URL="http://localhost:8000"
+export PYWORKER_BENCHMARK="benchmarks.openai_chat:benchmark"
+export PYWORKER_WORKER_PORT="3000"
+export PYWORKER_UNSECURED="true"
+python server.py
+```
 
-Join the conversation and get help:
+```bash
+curl -X POST http://localhost:3000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "my-model", "prompt": "Hello", "max_tokens": 100}'
+```
 
-*   **Vast.ai Discord:** [https://discord.gg/Pa9M29FFye](https://discord.gg/Pa9M29FFye)
-*   **Vast.ai Subreddit:** [https://reddit.com/r/vastai/](https://reddit.com/r/vastai/)
+## Configuration
+
+### Required
+
+| Variable | Description |
+|----------|-------------|
+| `PYWORKER_BACKEND_URL` | Backend API URL |
+| `PYWORKER_WORKER_PORT` | Proxy listen port (default: 3000 on Vast.ai) |
+
+### Core Options
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PYWORKER_BENCHMARK` | None | Benchmark module path (e.g., `benchmarks.openai_chat:benchmark`) |
+| `PYWORKER_HEALTHCHECK_ENDPOINT` | `/health` | Health check path |
+| `PYWORKER_ALLOW_PARALLEL` | `true` | Allow concurrent requests |
+| `PYWORKER_MAX_WAIT_TIME` | `10.0` | Max queue wait (seconds) |
+| `PYWORKER_READY_TIMEOUT_INITIAL` | `1200` | Startup timeout for model downloads |
+| `PYWORKER_READY_TIMEOUT_RESUME` | `300` | Resume timeout (models on disk) |
+| `PYWORKER_UNSECURED` | `false` | Skip signature verification (dev only) |
+| `PYWORKER_USE_SSL` | varies | SSL enabled (true on Vast.ai, false locally) |
+| `PYWORKER_LOG_LEVEL` | `INFO` | Logging level |
+
+### Advanced Options
+
+See all tunables in `lib/backend.py` and `lib/metrics.py`:
+- Connection pooling: `PYWORKER_CONNECTION_LIMIT*`
+- Healthcheck tuning: `PYWORKER_HEALTHCHECK_*`
+- Metrics reporting: `PYWORKER_METRICS_*`
+
+## Benchmarks
+
+PyWorker requires a benchmark to measure throughput:
+
+```python
+async def benchmark(backend_url: str, session: ClientSession) -> float:
+    # Use relative paths - session has base URL configured
+    endpoint = "/v1/completions"
+    async with session.post(endpoint, json=payload) as response:
+        ...
+    return max_throughput  # workload units/second
+```
+
+Built-in benchmarks:
+- `benchmarks.openai_chat:benchmark` - OpenAI-compatible APIs
+- `benchmarks.tgi:benchmark` - Text Generation Inference
+- `benchmarks.comfyui:benchmark` - ComfyUI
+
+See [BENCHMARKS.md](BENCHMARKS.md) for writing custom benchmarks.
+
+## Client Proxy
+
+Call Vast.ai endpoints from your code:
+
+```bash
+# Interactive mode
+python client.py
+
+# Or specify endpoint
+python client.py --endpoint my-endpoint --account-key YOUR_KEY
+```
+
+Then use `http://localhost:8010` as your API base URL.
+
+See [CLIENT.md](CLIENT.md) for details.
+
+## How It Works
+
+```
+Client → Autoscaler → PyWorker → Backend API
+            ↓            ↓
+     (routes/signs)  (validates/streams)
+```
+
+1. Client sends request to Vast.ai
+2. Autoscaler signs and routes to worker
+3. PyWorker validates, forwards to backend
+4. Response streams back to client
+
+## File Structure
+
+```
+vespa/
+├── server.py           # Entry point
+├── client.py           # Client proxy
+├── lib/
+│   ├── backend.py      # Core proxy logic
+│   ├── metrics.py      # Metrics tracking
+│   ├── data_types.py   # Data structures
+│   └── server.py       # Server setup
+├── benchmarks/         # Benchmark functions
+└── start_server.sh     # Production startup
+```
+
+## Troubleshooting
+
+**Backend Connection Error**
+- Verify `PYWORKER_BACKEND_URL` is correct
+- Ensure backend is running
+
+**Benchmark Fails**
+- Check backend health endpoint
+- Test benchmark function directly
+
+**Worker Not Ready**
+- Increase `PYWORKER_READY_TIMEOUT_INITIAL` for slow-loading models
+- Verify healthcheck returns HTTP 200
+
+## Resources
+
+- [Benchmark Guide](BENCHMARKS.md)
+- [Client Guide](CLIENT.md)
+- [Vast.ai Discord](https://discord.gg/Pa9M29FFye)
+
+## License
+
+MIT License

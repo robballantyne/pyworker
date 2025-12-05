@@ -1,8 +1,18 @@
+"""
+Load testing utilities for PyWorker workers.
+
+This script simulates multiple concurrent clients making requests to a Vast.ai endpoint,
+using the same test payloads as the benchmark functions.
+
+Usage:
+    [MODEL_NAME="Qwen/Qwen3-8B"] python -m lib.test_utils -k YOUR_API_KEY -e endpoint-name -b benchmarks.openai_chat -n 100 -rps 10
+"""
 import logging
 import os
 import time
 import argparse
-from typing import Callable, List, Dict, Tuple, Dict, Any, Type
+import importlib
+from typing import Callable, List, Dict, Tuple, Any
 from time import sleep
 import threading
 from enum import Enum
@@ -13,7 +23,7 @@ from utils.endpoint_util import Endpoint
 from utils.ssl import get_cert_file_path
 import requests
 
-from lib.data_types import AuthData, ApiPayload
+from lib.data_types import AuthData
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -33,36 +43,7 @@ class ClientStatus(Enum):
 total_success = 0
 last_res = []
 stop_event = threading.Event()
-
 start_time = time.time()
-test_args = argparse.ArgumentParser(description="Test inference endpoint")
-test_args.add_argument(
-    "-k", dest="api_key", type=str, required=True, help="Your vast account API key"
-)
-test_args.add_argument(
-    "-e",
-    dest="endpoint_group_name",
-    type=str,
-    required=True,
-    help="Endpoint group name",
-)
-test_args.add_argument(
-    "-l",
-    dest="server_url",
-    action="store_const",
-    const="http://localhost:8081",
-    default="https://run.vast.ai",
-    help="Call local autoscaler instead of prod, for dev use only",
-)
-test_args.add_argument(
-    "-i",
-    dest="instance",
-    type=str,
-    default="prod",
-    help="Autoscaler shard to run the command against, default: prod",
-)
-
-GetPayloadAndWorkload = Callable[[], Tuple[Dict[str, Any], float]]
 
 
 def print_truncate_res(res: str):
@@ -77,9 +58,8 @@ class ClientState:
     endpoint_group_name: str
     api_key: str
     server_url: str
-    worker_endpoint: str
     instance: str
-    payload: ApiPayload
+    get_test_request: Callable[[], Tuple[str, Dict[str, Any], float]]
     url: str = ""
     status: ClientStatus = ClientStatus.FetchEndpoint
     as_error: List[str] = field(default_factory=list)
@@ -94,10 +74,14 @@ class ClientState:
             )
             self.status = ClientStatus.Error
             return
+
+        # Get test request from benchmark module
+        worker_endpoint, payload, workload = self.get_test_request()
+
         route_payload = {
             "endpoint": self.endpoint_group_name,
             "api_key": self.api_key,
-            "cost": self.payload.count_workload(),
+            "cost": workload,
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
         response = requests.post(
@@ -115,11 +99,11 @@ class ClientState:
         message = response.json()
         worker_address = message["url"]
         req_data = dict(
-            payload=asdict(self.payload),
+            payload=payload,
             auth_data=asdict(AuthData.from_json_msg(message)),
         )
         self.url = worker_address
-        url = urljoin(worker_address, self.worker_endpoint)
+        url = urljoin(worker_address, worker_endpoint)
         self.status = ClientStatus.Generating
 
         response = requests.post(
@@ -234,8 +218,7 @@ def run_test(
     endpoint_group_name: str,
     api_key: str,
     server_url: str,
-    worker_endpoint: str,
-    payload_cls: Type[ApiPayload],
+    get_test_request: Callable[[], Tuple[str, Dict[str, Any], float]],
     instance: str,
 ):
     threads = []
@@ -256,8 +239,7 @@ def run_test(
                 endpoint_group_name=endpoint_group_name,
                 api_key=endpoint_api_key,
                 server_url=server_url,
-                worker_endpoint=worker_endpoint,
-                payload=payload_cls.for_test(),
+                get_test_request=get_test_request,
                 instance=instance,
             )
             clients.append(client)
@@ -272,9 +254,25 @@ def run_test(
         stop_event.set()
 
 
-def test_load_cmd(
-    payload_cls: Type[ApiPayload], endpoint: str, arg_parser: argparse.ArgumentParser
-):
+if __name__ == "__main__":
+    arg_parser = argparse.ArgumentParser(description="Test inference endpoint with load")
+    arg_parser.add_argument(
+        "-k", dest="api_key", type=str, required=True, help="Your vast account API key"
+    )
+    arg_parser.add_argument(
+        "-e",
+        dest="endpoint_group_name",
+        type=str,
+        required=True,
+        help="Endpoint group name",
+    )
+    arg_parser.add_argument(
+        "-b",
+        dest="benchmark_module",
+        type=str,
+        required=True,
+        help="Benchmark module (e.g., benchmarks.openai_chat, benchmarks.tgi, benchmarks.comfyui)",
+    )
     arg_parser.add_argument(
         "-n",
         dest="num_requests",
@@ -289,22 +287,42 @@ def test_load_cmd(
         required=True,
         help="requests per second",
     )
+    arg_parser.add_argument(
+        "-i",
+        dest="instance",
+        type=str,
+        default="prod",
+        help="Autoscaler shard to run the command against, default: prod",
+    )
+
     args = arg_parser.parse_args()
-    if hasattr(args, "comfy_model"):
-        os.environ["COMFY_MODEL"] = args.comfy_model
+
+    # Load benchmark module
+    try:
+        benchmark_module = importlib.import_module(args.benchmark_module)
+        if not hasattr(benchmark_module, 'get_test_request'):
+            raise ValueError(
+                f"Benchmark module {args.benchmark_module} does not have get_test_request() function"
+            )
+        get_test_request = benchmark_module.get_test_request
+    except Exception as e:
+        log.error(f"Failed to load benchmark module '{args.benchmark_module}': {e}")
+        exit(1)
+
+    # Determine server URL
     server_url = {
         "prod": "https://run.vast.ai",
         "alpha": "https://run-alpha.vast.ai",
         "candidate": "https://run-candidate.vast.ai",
         "local": "http://localhost:8080",
     }.get(args.instance, "http://localhost:8080")
+
     run_test(
         num_requests=args.num_requests,
         requests_per_second=args.requests_per_second,
         api_key=args.api_key,
         server_url=server_url,
         endpoint_group_name=args.endpoint_group_name,
-        worker_endpoint=endpoint,
-        payload_cls=payload_cls,
+        get_test_request=get_test_request,
         instance=args.instance,
     )

@@ -10,8 +10,8 @@ DEBUG_LOG="$WORKSPACE_DIR/debug.log"
 PYWORKER_LOG="$WORKSPACE_DIR/pyworker.log"
 
 REPORT_ADDR="${REPORT_ADDR:-https://run.vast.ai}"
-USE_SSL="${USE_SSL:-true}"
-WORKER_PORT="${WORKER_PORT:-3000}"
+export PYWORKER_USE_SSL="${PYWORKER_USE_SSL:-true}"
+export PYWORKER_WORKER_PORT="${PYWORKER_WORKER_PORT:-3000}"
 mkdir -p "$WORKSPACE_DIR"
 cd "$WORKSPACE_DIR"
 
@@ -22,24 +22,22 @@ function echo_var(){
     echo "$1: ${!1}"
 }
 
-[ -z "$BACKEND" ] && echo "BACKEND must be set!" && exit 1
-[ -z "$MODEL_LOG" ] && echo "MODEL_LOG must be set!" && exit 1
-[ -z "$HF_TOKEN" ] && echo "HF_TOKEN must be set!" && exit 1
-[ "$BACKEND" = "comfyui" ] && [ -z "$COMFY_MODEL" ] && echo "For comfyui backends, COMFY_MODEL must be set!" && exit 1
-
+# HF_TOKEN might be needed by model server
+[ -z "$HF_TOKEN" ] && echo "Warning: HF_TOKEN not set (may be required by model server)"
 
 echo "start_server.sh"
 date
 
-echo_var BACKEND
 echo_var REPORT_ADDR
-echo_var WORKER_PORT
 echo_var WORKSPACE_DIR
 echo_var SERVER_DIR
 echo_var ENV_PATH
 echo_var DEBUG_LOG
 echo_var PYWORKER_LOG
-echo_var MODEL_LOG
+echo "PYWORKER_WORKER_PORT: ${PYWORKER_WORKER_PORT:-3000}"
+echo "PYWORKER_USE_SSL: ${PYWORKER_USE_SSL:-true}"
+echo "PYWORKER_BACKEND_URL: ${PYWORKER_BACKEND_URL:-not set}"
+echo "PYWORKER_BENCHMARK: ${PYWORKER_BENCHMARK:-none}"
 
 # if instance is rebooted, we want to clear out the log file so pyworker doesn't read lines
 # from the run prior to reboot. past logs are saved in $MODEL_LOG.old for debugging only
@@ -67,7 +65,7 @@ then
     fi
 
     # Fork testing
-    [[ ! -d $SERVER_DIR ]] && git clone "${PYWORKER_REPO:-https://github.com/vast-ai/pyworker}" "$SERVER_DIR"
+    [[ ! -d $SERVER_DIR ]] && git clone "${PYWORKER_REPO:-https://github.com/robballantyne/vespa}" "$SERVER_DIR"
     if [[ -n ${PYWORKER_REF:-} ]]; then
         (cd "$SERVER_DIR" && git checkout "$PYWORKER_REF")
     fi
@@ -85,9 +83,20 @@ else
     echo "venv: $VIRTUAL_ENV"
 fi
 
-[ ! -d "$SERVER_DIR/workers/$BACKEND" ] && echo "$BACKEND not supported!" && exit 1
+# Validate PYWORKER_BACKEND_URL is set
+if [ -z "$PYWORKER_BACKEND_URL" ]; then
+    echo "ERROR: PYWORKER_BACKEND_URL must be set!"
+    echo "Example: PYWORKER_BACKEND_URL=http://localhost:8000"
+    exit 1
+fi
 
-if [ "$USE_SSL" = true ]; then
+# Validate server.py exists
+if [ ! -f "$SERVER_DIR/server.py" ]; then
+    echo "ERROR: $SERVER_DIR/server.py not found!"
+    exit 1
+fi
+
+if [ "$PYWORKER_USE_SSL" = true ]; then
 
     cat << EOF > /etc/openssl-san.cnf
     [req]
@@ -126,14 +135,14 @@ fi
 
 
 
-export REPORT_ADDR WORKER_PORT USE_SSL UNSECURED
+export REPORT_ADDR
 
 cd "$SERVER_DIR"
 
 echo "launching PyWorker server"
 
 set +e
-python3 -m "workers.$BACKEND.server" |& tee -a "$PYWORKER_LOG"
+python3 server.py |& tee -a "$PYWORKER_LOG"
 PY_STATUS=${PIPESTATUS[0]}
 set -e
 

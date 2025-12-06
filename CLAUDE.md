@@ -13,7 +13,7 @@ Client → Autoscaler → PyWorker → Backend API
 ## File Structure
 
 ```
-vespa/
+pyworker/
 ├── server.py           # Entry point, loads config and benchmark
 ├── client.py           # Client proxy for calling Vast.ai endpoints
 ├── lib/
@@ -23,7 +23,7 @@ vespa/
 │   └── server.py       # aiohttp server setup
 ├── benchmarks/         # Benchmark functions
 │   ├── openai_chat.py  # OpenAI chat completions (works for all LLMs)
-│   └── comfyui.py      # ComfyUI
+│   └── comfyui.py      # ComfyUI (100% standard job convention)
 └── start_server.sh     # Production startup script
 ```
 
@@ -64,6 +64,7 @@ vespa/
 | `PYWORKER_UNSECURED` | `false` | Skip signature verification (dev only) |
 | `PYWORKER_USE_SSL` | `false`/`true` | SSL (false direct, true via start_server.sh) |
 | `PYWORKER_BLOCKED_PATHS` | None | Comma-separated paths to block (supports `*` and `?` wildcards) |
+| `PYWORKER_DEFAULT_COST` | None | Default workload when user cost <= 1 (e.g., `100` for job backends) |
 
 ### Client Options
 | Variable | Default | Description |
@@ -94,6 +95,24 @@ Auth via query params with `serverless_` prefix:
 ### Unsecured Mode (local dev)
 Send payload directly without auth_data wrapper.
 
+## Workload and Cost
+
+PyWorker uses `auth_data.cost` (user-provided) for all workload calculations:
+
+```
+wait_time = current_workload / max_throughput
+if wait_time > max_wait_time: reject 429
+```
+
+**Units must match between benchmark and `auth_data.cost`:**
+
+| Backend Type | Benchmark Returns | User Sends `cost` | Example |
+|--------------|-------------------|-------------------|---------|
+| LLMs | tokens/sec | expected tokens | 500 |
+| Jobs (ComfyUI, Blender) | %/sec of standard job | % of standard job | 100 |
+
+For jobs: `cost=100` = 100% of standard job, `cost=50` = lighter job, `cost=200` = heavier job.
+
 ## Benchmarks
 
 ```python
@@ -103,13 +122,16 @@ async def benchmark(backend_url: str, session: ClientSession) -> float:
         backend_url: For logging only
         session: ClientSession with base URL configured
     Returns:
-        max_throughput in workload units/second
+        max_throughput in workload units/second (must match cost units)
     """
     # IMPORTANT: Use relative paths, NOT absolute URLs
     endpoint = "/v1/completions"
     async with session.post(endpoint, json=payload) as response:
         ...
     return throughput
+
+# LLM benchmark: return tokens/sec (from response usage stats)
+# Job benchmark: return (N * 100) / elapsed_seconds
 ```
 
 ## Important Patterns

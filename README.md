@@ -58,6 +58,7 @@ curl -X POST http://localhost:3000/v1/completions \
 | `PYWORKER_USE_SSL` | varies | SSL enabled (true on Vast.ai, false locally) |
 | `PYWORKER_LOG_LEVEL` | `INFO` | Logging level |
 | `PYWORKER_BLOCKED_PATHS` | None | Comma-separated paths to block (supports `*` and `?` wildcards) |
+| `PYWORKER_DEFAULT_COST` | None | Default workload cost when user provides <= 1 (see Workload and Cost) |
 
 ### Advanced Options
 
@@ -138,15 +139,103 @@ Client → Autoscaler → PyWorker → Backend API
      (routes/signs)  (validates/streams)
 ```
 
-1. Client sends request to Vast.ai
+1. Client sends request to Vast.ai with `auth_data.cost`
 2. Autoscaler signs and routes to worker
-3. PyWorker validates, forwards to backend
+3. PyWorker validates, tracks workload, forwards to backend
 4. Response streams back to client
+5. PyWorker reports metrics (throughput, queue depth) to autoscaler
+
+## Workload and Cost
+
+PyWorker uses `auth_data.cost` (user-provided) for all workload calculations. The benchmark establishes throughput capacity, and the cost value determines queue behavior.
+
+### The Math
+
+```
+wait_time = current_workload / max_throughput
+
+if wait_time > PYWORKER_MAX_WAIT_TIME:
+    reject with 429
+```
+
+**For this to work correctly, `auth_data.cost` must use the same units as the benchmark.**
+
+### Default Cost Override
+
+If users send unreasonably low cost values (0 or 1), you can set a fallback:
+
+```bash
+PYWORKER_DEFAULT_COST=100  # Use 100 when cost <= 1
+```
+
+This is useful for job-based backends where users might not set cost correctly. When `cost <= 1` and `PYWORKER_DEFAULT_COST` is set, the default is used instead for queue calculations.
+
+### Workload Conventions
+
+There are two conventions depending on backend type:
+
+#### Token-based (LLMs)
+
+For LLM backends (vLLM, TGI, Ollama), workload is measured in **tokens**:
+
+| Component | Value | Unit |
+|-----------|-------|------|
+| Benchmark measures | ~500 | tokens/sec (varies by GPU/model) |
+| User sends `cost` | 500 | tokens (expected output) |
+| `wait_time` | 1.0 | seconds |
+
+The benchmark runs chat completions with `max_tokens=500` and measures actual `completion_tokens` from the response. Users should set `cost` to their expected token output.
+
+#### Percentage-based (Job backends)
+
+For job-based backends (ComfyUI, Blender, etc.), workload is measured as **percentage of a standard job**:
+
+| Component | Value | Unit |
+|-----------|-------|------|
+| Benchmark measures | 6.67 | %/sec (for 15-sec standard job) |
+| User sends `cost` | 100 | % (one standard job) |
+| `wait_time` | 15.0 | seconds |
+
+- `cost=100` → one standard job (100%)
+- `cost=50` → lighter job (50% of standard)
+- `cost=200` → heavier job (2x standard)
+
+The benchmark runs a standard workflow and returns `100 / elapsed_seconds`.
+
+### Writing Benchmarks
+
+Your benchmark must return throughput in the same units users will send as `cost`:
+
+```python
+# Token-based (LLMs)
+async def benchmark(backend_url: str, session: ClientSession) -> float:
+    # Run requests, measure actual tokens generated
+    total_tokens = sum(response["usage"]["completion_tokens"] for ...)
+    return total_tokens / elapsed_seconds  # tokens/sec
+
+# Percentage-based (Jobs)
+async def benchmark(backend_url: str, session: ClientSession) -> float:
+    STANDARD_JOB_WORKLOAD = 100  # 100% of standard job
+    # Run N standard jobs
+    return (N * STANDARD_JOB_WORKLOAD) / elapsed_seconds  # %/sec
+```
+
+### Queue Behavior Example
+
+ComfyUI with 15-second standard jobs (`max_throughput = 6.67`):
+
+| Requests in flight | `cost` each | `cur_load` | `wait_time` | Result (max_wait=10s) |
+|--------------------|-------------|------------|-------------|----------------------|
+| 0 | - | 0 | 0s | accept |
+| 1 | 100 | 100 | 15s | reject (429) |
+| 1 | 50 | 50 | 7.5s | accept |
+
+With `PYWORKER_ALLOW_PARALLEL=false`, requests queue behind the semaphore regardless of wait_time calculation.
 
 ## File Structure
 
 ```
-vespa/
+pyworker/
 ├── server.py           # Entry point
 ├── client.py           # Client proxy
 ├── lib/
@@ -154,7 +243,7 @@ vespa/
 │   ├── metrics.py      # Metrics tracking
 │   ├── data_types.py   # Data structures
 │   └── server.py       # Server setup
-├── benchmarks/         # Benchmark functions
+├── benchmarks/         # Benchmark functions (token-based and job-based)
 └── start_server.sh     # Production startup
 ```
 

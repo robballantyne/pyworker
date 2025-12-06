@@ -99,6 +99,9 @@ class Backend:
     blocked_paths: list[str] = dataclasses.field(
         default_factory=parse_blocked_paths
     )
+    default_cost: Optional[float] = dataclasses.field(
+        default_factory=lambda: float(os.environ["PYWORKER_DEFAULT_COST"]) if "PYWORKER_DEFAULT_COST" in os.environ else None
+    )
 
     def __post_init__(self):
         self.metrics = Metrics()
@@ -110,6 +113,8 @@ class Backend:
         self.__consecutive_healthcheck_failures: int = 0
         if self.blocked_paths:
             log.info(f"Blocked paths: {self.blocked_paths}")
+        if self.default_cost is not None:
+            log.info(f"Default cost: {self.default_cost} (applied when cost <= 1)")
 
     @property
     def pubkey(self) -> Optional[RSA.RsaKey]:
@@ -295,7 +300,13 @@ class Backend:
         assert payload is not None, "payload should not be None after error check"
 
         # Create request metrics
-        workload = float(auth_data.cost)
+        # Use default_cost if provided cost is unreasonably low (0 or 1)
+        cost = float(auth_data.cost)
+        if cost <= 1 and self.default_cost is not None:
+            log.debug(f"Cost {cost} too low, using default_cost {self.default_cost}")
+            workload = self.default_cost
+        else:
+            workload = cost
         request_metrics = RequestMetrics(
             request_idx=auth_data.request_idx,
             reqnum=auth_data.reqnum,

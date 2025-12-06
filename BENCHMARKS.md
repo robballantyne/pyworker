@@ -11,11 +11,6 @@ export MODEL_NAME="meta-llama/Llama-2-7b-hf"
 ```
 Works with vLLM, Ollama, TGI (OpenAI mode), llama.cpp.
 
-### Text Generation Inference (`benchmarks.tgi`)
-```bash
-export PYWORKER_BENCHMARK="benchmarks.tgi:benchmark"
-```
-
 ### ComfyUI (`benchmarks.comfyui`)
 ```bash
 export PYWORKER_BENCHMARK="benchmarks.comfyui:benchmark"

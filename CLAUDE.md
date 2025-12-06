@@ -22,8 +22,7 @@ vespa/
 │   ├── data_types.py   # AuthData, RequestMetrics, ModelMetrics
 │   └── server.py       # aiohttp server setup
 ├── benchmarks/         # Benchmark functions
-│   ├── openai_chat.py  # OpenAI chat completions
-│   ├── tgi.py          # Text Generation Inference
+│   ├── openai_chat.py  # OpenAI chat completions (works for all LLMs)
 │   └── comfyui.py      # ComfyUI
 └── start_server.sh     # Production startup script
 ```

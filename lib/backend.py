@@ -40,6 +40,14 @@ CONNECTION_LIMIT = int(os.environ.get("PYWORKER_CONNECTION_LIMIT", "100"))
 CONNECTION_LIMIT_PER_HOST = int(os.environ.get("PYWORKER_CONNECTION_LIMIT_PER_HOST", "20"))
 
 
+def parse_blocked_paths() -> list[str]:
+    """Parse comma-separated blocked paths from environment variable"""
+    paths_str = os.environ.get("PYWORKER_BLOCKED_PATHS", "")
+    if not paths_str:
+        return []
+    return [p.strip() for p in paths_str.split(",") if p.strip()]
+
+
 def create_tcp_connector(force_close: bool = True) -> TCPConnector:
     """Create a standard TCP connector with consistent settings"""
     return TCPConnector(
@@ -88,6 +96,9 @@ class Backend:
     mtoken: str = dataclasses.field(
         default_factory=lambda: os.environ.get("MASTER_TOKEN", "")
     )
+    blocked_paths: list[str] = dataclasses.field(
+        default_factory=parse_blocked_paths
+    )
 
     def __post_init__(self):
         self.metrics = Metrics()
@@ -97,6 +108,8 @@ class Backend:
         self._pubkey = self._fetch_pubkey()
         self.__start_healthcheck: bool = False
         self.__consecutive_healthcheck_failures: int = 0
+        if self.blocked_paths:
+            log.info(f"Blocked paths: {self.blocked_paths}")
 
     @property
     def pubkey(self) -> Optional[RSA.RsaKey]:
@@ -111,6 +124,14 @@ class Backend:
         connector = create_tcp_connector(force_close=True)  # Required for long running jobs
         timeout = ClientTimeout(total=None)
         return ClientSession(self.backend_url, timeout=timeout, connector=connector)
+
+    def __is_path_blocked(self, path: str) -> bool:
+        """Check if a path matches any blocked pattern (supports * and ? wildcards)"""
+        import fnmatch
+        for pattern in self.blocked_paths:
+            if fnmatch.fnmatch(path, pattern):
+                return True
+        return False
 
     def create_handler(self, path: Optional[str] = None):
         """
@@ -254,6 +275,15 @@ class Backend:
         target_path: Optional[str] = None,
     ) -> web.StreamResponse:
         """Forward requests to the model endpoint as-is"""
+        # Check for blocked paths
+        check_path = target_path if target_path else request.path
+        if self.__is_path_blocked(check_path):
+            log.warning(f"Blocked request to path: {check_path}")
+            return web.json_response(
+                {"error": f"Path '{check_path}' is blocked. This endpoint is not available in serverless mode."},
+                status=403
+            )
+
         # Parse and validate request
         auth_data, payload, error_response = await self.__parse_and_validate_request(request)
         if error_response:

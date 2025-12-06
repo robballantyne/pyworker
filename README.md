@@ -57,6 +57,7 @@ curl -X POST http://localhost:3000/v1/completions \
 | `PYWORKER_UNSECURED` | `false` | Skip signature verification (dev only) |
 | `PYWORKER_USE_SSL` | varies | SSL enabled (true on Vast.ai, false locally) |
 | `PYWORKER_LOG_LEVEL` | `INFO` | Logging level |
+| `PYWORKER_BLOCKED_PATHS` | None | Comma-separated paths to block (supports `*` and `?` wildcards) |
 
 ### Advanced Options
 
@@ -100,6 +101,34 @@ python client.py --endpoint my-endpoint --account-key YOUR_KEY
 Then use `http://localhost:8010` as your API base URL.
 
 See [CLIENT.md](CLIENT.md) for details.
+
+## Serverless Compatibility
+
+Your backend **must hold the HTTP connection open until processing is complete**. PyWorker marks a request as "done" when the backend returns a response - if your backend returns early with a job ID, the worker may scale down before the job finishes.
+
+**Compatible backends** (work out of the box):
+- vLLM, TGI, Ollama - hold connection until generation complete
+- Any synchronous API
+
+**Async backends** require a sync wrapper:
+- ComfyUI - use a wrapper that submits workflow and polls until complete
+- Queue-based systems - add a synchronous endpoint that blocks until done
+
+### Blocking Async Endpoints
+
+If your backend exposes both sync and async endpoints, block the async ones:
+
+```bash
+# Block specific paths (comma-separated, supports wildcards)
+PYWORKER_BLOCKED_PATHS="/generate,/queue/submit"
+
+# Wildcard examples
+PYWORKER_BLOCKED_PATHS="/api/*/async"     # Matches /api/foo/async, /api/bar/async
+PYWORKER_BLOCKED_PATHS="/jobs/*"          # Matches /jobs/123, /jobs/status
+PYWORKER_BLOCKED_PATHS="/v?/queue"        # Matches /v1/queue, /v2/queue
+```
+
+Requests to blocked paths return `403 Forbidden` with an error message.
 
 ## How It Works
 

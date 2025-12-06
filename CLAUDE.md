@@ -64,6 +64,7 @@ vespa/
 | `PYWORKER_READY_TIMEOUT_RESUME` | `300` | Resume timeout (models on disk) |
 | `PYWORKER_UNSECURED` | `false` | Skip signature verification (dev only) |
 | `PYWORKER_USE_SSL` | `false`/`true` | SSL (false direct, true via start_server.sh) |
+| `PYWORKER_BLOCKED_PATHS` | None | Comma-separated paths to block (supports `*` and `?` wildcards) |
 
 ### Client Options
 | Variable | Default | Description |

@@ -58,6 +58,7 @@ pyworker/
 | `PYWORKER_BENCHMARK` | None | Benchmark module (e.g., `benchmarks.openai_chat:benchmark`) |
 | `PYWORKER_HEALTHCHECK_ENDPOINT` | `/health` | Health check path |
 | `PYWORKER_ALLOW_PARALLEL` | `true` | Allow concurrent requests |
+| `PYWORKER_MAX_CONCURRENCY` | None | Max concurrent requests (unlimited by default) |
 | `PYWORKER_MAX_WAIT_TIME` | `10.0` | Max queue wait (seconds) |
 | `PYWORKER_READY_TIMEOUT_INITIAL` | `1200` | Startup timeout (models downloading) |
 | `PYWORKER_READY_TIMEOUT_RESUME` | `300` | Resume timeout (models on disk) |

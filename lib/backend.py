@@ -78,6 +78,9 @@ class Backend:
     max_wait_time: float = dataclasses.field(
         default_factory=lambda: float(os.environ.get("PYWORKER_MAX_WAIT_TIME", "10.0"))
     )
+    max_concurrency: Optional[int] = dataclasses.field(
+        default_factory=lambda: int(os.environ["PYWORKER_MAX_CONCURRENCY"]) if "PYWORKER_MAX_CONCURRENCY" in os.environ else None
+    )
     ready_timeout_initial: int = dataclasses.field(
         default_factory=lambda: int(os.environ.get("PYWORKER_READY_TIMEOUT_INITIAL", "1200"))
     )
@@ -86,7 +89,6 @@ class Backend:
     )
     reqnum = -1
     version = VERSION
-    sem: Semaphore = dataclasses.field(default_factory=Semaphore)
     unsecured: bool = dataclasses.field(
         default_factory=lambda: os.environ.get("PYWORKER_UNSECURED", "false").lower() == "true",
     )
@@ -115,6 +117,16 @@ class Backend:
             log.info(f"Blocked paths: {self.blocked_paths}")
         if self.default_cost is not None:
             log.info(f"Default cost: {self.default_cost} (applied when cost <= 1)")
+        # Set up concurrency semaphore
+        if not self.allow_parallel_requests:
+            self._concurrency_sem = Semaphore(1)
+            log.info("Parallel requests disabled (concurrency=1)")
+        elif self.max_concurrency is not None:
+            self._concurrency_sem = Semaphore(self.max_concurrency)
+            log.info(f"Max concurrency: {self.max_concurrency}")
+        else:
+            self._concurrency_sem = None
+            log.info("Unlimited concurrency")
 
     @property
     def pubkey(self) -> Optional[RSA.RsaKey]:
@@ -328,12 +340,12 @@ class Backend:
         try:
             self.metrics._request_start(request_metrics)
 
-            # Acquire semaphore if parallel requests not allowed
-            if self.allow_parallel_requests is False:
-                log.debug(f"Waiting to acquire Sem for reqnum:{request_metrics.reqnum}")
-                await self.sem.acquire()
+            # Acquire semaphore if concurrency is limited
+            if self._concurrency_sem is not None:
+                log.debug(f"Waiting to acquire semaphore for reqnum:{request_metrics.reqnum}")
+                await self._concurrency_sem.acquire()
                 acquired = True
-                log.debug(f"Sem acquired for reqnum:{request_metrics.reqnum}, starting request...")
+                log.debug(f"Semaphore acquired for reqnum:{request_metrics.reqnum}, starting request...")
             else:
                 log.debug(f"Starting request for reqnum:{request_metrics.reqnum}")
 
@@ -369,7 +381,7 @@ class Backend:
         finally:
             # Always release the semaphore if it was acquired
             if acquired:
-                self.sem.release()
+                self._concurrency_sem.release()
             self.metrics._request_end(request_metrics)
 
     def __parse_request(self, data: dict, request_path: str = "/") -> Tuple[AuthData, dict]:

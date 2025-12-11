@@ -22,10 +22,49 @@ function echo_var(){
     echo "$1: ${!1}"
 }
 
-[ -z "$BACKEND" ] && echo "BACKEND must be set!" && exit 1
-[ -z "$MODEL_LOG" ] && echo "MODEL_LOG must be set!" && exit 1
-[ -z "$HF_TOKEN" ] && echo "HF_TOKEN must be set!" && exit 1
-[ "$BACKEND" = "comfyui" ] && [ -z "$COMFY_MODEL" ] && echo "For comfyui backends, COMFY_MODEL must be set!" && exit 1
+function report_error_and_exit(){
+    local error_msg="$1"
+    echo "ERROR: $error_msg"
+    
+    # Report error to autoscaler
+    MTOKEN="${MASTER_TOKEN:-}"
+    VERSION="${PYWORKER_VERSION:-0}"
+    
+    IFS=',' read -r -a REPORT_ADDRS <<< "${REPORT_ADDR}"
+    for addr in "${REPORT_ADDRS[@]}"; do
+        curl -sS -X POST -H 'Content-Type: application/json' \
+            -d "$(cat <<JSON
+{
+  "id": ${CONTAINER_ID:-0},
+  "mtoken": "${MTOKEN}",
+  "version": "${VERSION}",
+  "loadtime": 0,
+  "new_load": 0,
+  "cur_load": 0,
+  "rej_load": 0,
+  "max_perf": 0,
+  "cur_perf": 0,
+  "error_msg": "${error_msg}",
+  "num_requests_working": 0,
+  "num_requests_recieved": 0,
+  "additional_disk_usage": 0,
+  "working_request_idxs": [],
+  "cur_capacity": 0,
+  "max_capacity": 0,
+  "url": "${URL:-}"
+}
+JSON
+)" "${addr%/}/worker_status/" || true
+    done
+    
+    exit 1
+}
+
+[ -z "$BACKEND" ] && report_error_and_exit "BACKEND must be set!"
+[ -z "$MODEL_LOG" ] && report_error_and_exit "MODEL_LOG must be set!"
+[ -z "$HF_TOKEN" ] && report_error_and_exit "HF_TOKEN must be set!"
+[ -z "$CONTAINER_ID" ] && report_error_and_exit "CONTAINER_ID must be set!"
+[ "$BACKEND" = "comfyui" ] && [ -z "$COMFY_MODEL" ] && report_error_and_exit "For comfyui backends, COMFY_MODEL must be set!"
 
 
 echo "start_server.sh"
@@ -45,51 +84,86 @@ echo_var MODEL_LOG
 # from the run prior to reboot. past logs are saved in $MODEL_LOG.old for debugging only
 if [ -e "$MODEL_LOG" ]; then
     echo "Rotating model log at $MODEL_LOG to $MODEL_LOG.old"
-    cat "$MODEL_LOG" >> "$MODEL_LOG.old" 
-    : > "$MODEL_LOG"
+    if ! cat "$MODEL_LOG" >> "$MODEL_LOG.old"; then
+        report_error_and_exit "Failed to rotate model log"
+    fi
+    if ! : > "$MODEL_LOG"; then
+        report_error_and_exit "Failed to truncate model log"
+    fi
 fi
 
 # Populate /etc/environment with quoted values
 if ! grep -q "VAST" /etc/environment; then
-    env -0 | grep -zEv "^(HOME=|SHLVL=)|CONDA" | while IFS= read -r -d '' line; do
+    if ! env -0 | grep -zEv "^(HOME=|SHLVL=)|CONDA" | while IFS= read -r -d '' line; do
             name=${line%%=*}
             value=${line#*=}
             printf '%s="%s"\n' "$name" "$value"
-        done > /etc/environment
+        done > /etc/environment; then
+        echo "WARNING: Failed to populate /etc/environment, continuing anyway"
+    fi
 fi
 
 if [ ! -d "$ENV_PATH" ]
 then
     echo "setting up venv"
     if ! which uv; then
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        source ~/.local/bin/env
+        if ! curl -LsSf https://astral.sh/uv/install.sh | sh; then
+            report_error_and_exit "Failed to install uv package manager"
+        fi
+        if [[ -f ~/.local/bin/env ]]; then
+            if ! source ~/.local/bin/env; then
+                report_error_and_exit "Failed to source uv environment"
+            fi
+        else
+            echo "WARNING: ~/.local/bin/env not found after uv installation"
+        fi
     fi
 
     # Fork testing
-    [[ ! -d $SERVER_DIR ]] && git clone "${PYWORKER_REPO:-https://github.com/vast-ai/pyworker}" "$SERVER_DIR"
+    if [[ ! -d $SERVER_DIR ]]; then
+        if ! git clone "${PYWORKER_REPO:-https://github.com/vast-ai/pyworker}" "$SERVER_DIR"; then
+            report_error_and_exit "Failed to clone pyworker repository"
+        fi
+    fi
     if [[ -n ${PYWORKER_REF:-} ]]; then
-        (cd "$SERVER_DIR" && git checkout "$PYWORKER_REF")
+        if ! (cd "$SERVER_DIR" && git checkout "$PYWORKER_REF"); then
+            report_error_and_exit "Failed to checkout pyworker reference: $PYWORKER_REF"
+        fi
     fi
 
-    uv venv --python-preference only-managed "$ENV_PATH" -p 3.10
-    source "$ENV_PATH/bin/activate"
+    if ! uv venv --python-preference only-managed "$ENV_PATH" -p 3.10; then
+        report_error_and_exit "Failed to create virtual environment"
+    fi
+    
+    if ! source "$ENV_PATH/bin/activate"; then
+        report_error_and_exit "Failed to activate virtual environment"
+    fi
 
-    uv pip install -r "${SERVER_DIR}/requirements.txt"
+    if ! uv pip install -r "${SERVER_DIR}/requirements.txt"; then
+        report_error_and_exit "Failed to install Python requirements"
+    fi
 
-    touch ~/.no_auto_tmux
+    if ! touch ~/.no_auto_tmux; then
+        report_error_and_exit "Failed to create ~/.no_auto_tmux"
+    fi
 else
-    [[ -f ~/.local/bin/env ]] && source ~/.local/bin/env
-    source "$WORKSPACE_DIR/worker-env/bin/activate"
+    if [[ -f ~/.local/bin/env ]]; then
+        if ! source ~/.local/bin/env; then
+            report_error_and_exit "Failed to source uv environment"
+        fi
+    fi
+    if ! source "$WORKSPACE_DIR/worker-env/bin/activate"; then
+        report_error_and_exit "Failed to activate existing virtual environment"
+    fi
     echo "environment activated"
     echo "venv: $VIRTUAL_ENV"
 fi
 
-[ ! -d "$SERVER_DIR/workers/$BACKEND" ] && echo "$BACKEND not supported!" && exit 1
+[ ! -d "$SERVER_DIR/workers/$BACKEND" ] && report_error_and_exit "$BACKEND not supported!"
 
 if [ "$USE_SSL" = true ]; then
 
-    cat << EOF > /etc/openssl-san.cnf
+    if ! cat << EOF > /etc/openssl-san.cnf
     [req]
     default_bits       = 2048
     distinguished_name = req_distinguished_name
@@ -109,18 +183,25 @@ if [ "$USE_SSL" = true ]; then
     [alt_names]
     IP.1   = 0.0.0.0
 EOF
+    then
+        report_error_and_exit "Failed to write OpenSSL config"
+    fi
 
-    openssl req -newkey rsa:2048 -subj "/C=US/ST=CA/CN=pyworker.vast.ai/" \
+    if ! openssl req -newkey rsa:2048 -subj "/C=US/ST=CA/CN=pyworker.vast.ai/" \
         -nodes \
         -sha256 \
         -keyout /etc/instance.key \
         -out /etc/instance.csr \
-        -config /etc/openssl-san.cnf
+        -config /etc/openssl-san.cnf; then
+        report_error_and_exit "Failed to generate SSL certificate request"
+    fi
 
-    curl --header 'Content-Type: application/octet-stream' \
-        --data-binary @//etc/instance.csr \
+    if ! curl --header 'Content-Type: application/octet-stream' \
+        --data-binary @/etc/instance.csr \
         -X \
-        POST "https://console.vast.ai/api/v0/sign_cert/?instance_id=$CONTAINER_ID" > /etc/instance.crt;
+        POST "https://console.vast.ai/api/v0/sign_cert/?instance_id=$CONTAINER_ID" > /etc/instance.crt; then
+        report_error_and_exit "Failed to sign SSL certificate"
+    fi
 fi
 
 
@@ -128,7 +209,9 @@ fi
 
 export REPORT_ADDR WORKER_PORT USE_SSL UNSECURED
 
-cd "$SERVER_DIR"
+if ! cd "$SERVER_DIR"; then
+    report_error_and_exit "Failed to cd into SERVER_DIR: $SERVER_DIR"
+fi
 
 echo "launching PyWorker server"
 
@@ -138,37 +221,7 @@ PY_STATUS=${PIPESTATUS[0]}
 set -e
 
 if [ "${PY_STATUS}" -ne 0 ]; then
-  echo "PyWorker exited with status ${PY_STATUS}; notifying autoscaler..."
-  ERROR_MSG="PyWorker exited: code ${PY_STATUS}"
-  MTOKEN="${MASTER_TOKEN:-}"
-  VERSION="${PYWORKER_VERSION:-0}"
-
-  IFS=',' read -r -a REPORT_ADDRS <<< "${REPORT_ADDR}"
-  for addr in "${REPORT_ADDRS[@]}"; do
-    curl -sS -X POST -H 'Content-Type: application/json' \
-      -d "$(cat <<JSON
-{
-  "id": ${CONTAINER_ID:-0},
-  "mtoken": "${MTOKEN}",
-  "version": "${VERSION}",
-  "loadtime": 0,
-  "new_load": 0,
-  "cur_load": 0,
-  "rej_load": 0,
-  "max_perf": 0,
-  "cur_perf": 0,
-  "error_msg": "${ERROR_MSG}",
-  "num_requests_working": 0,
-  "num_requests_recieved": 0,
-  "additional_disk_usage": 0,
-  "working_request_idxs": [],
-  "cur_capacity": 0,
-  "max_capacity": 0,
-  "url": "${URL}"
-}
-JSON
-)" "${addr%/}/worker_status/" || true
-  done
+  report_error_and_exit "PyWorker exited with status ${PY_STATUS}"
 fi
 
 echo "launching PyWorker server done"

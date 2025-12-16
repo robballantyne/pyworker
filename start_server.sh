@@ -15,7 +15,6 @@ WORKER_PORT="${WORKER_PORT:-3000}"
 mkdir -p "$WORKSPACE_DIR"
 cd "$WORKSPACE_DIR"
 
-# make all output go to $DEBUG_LOG and stdout without having to add `... | tee -a $DEBUG_LOG` to every command
 exec &> >(tee -a "$DEBUG_LOG")
 
 function echo_var(){
@@ -25,11 +24,10 @@ function echo_var(){
 function report_error_and_exit(){
     local error_msg="$1"
     echo "ERROR: $error_msg"
-    
-    # Report error to autoscaler
+
     MTOKEN="${MASTER_TOKEN:-}"
     VERSION="${PYWORKER_VERSION:-0}"
-    
+
     IFS=',' read -r -a REPORT_ADDRS <<< "${REPORT_ADDR}"
     for addr in "${REPORT_ADDRS[@]}"; do
         curl -sS -X POST -H 'Content-Type: application/json' \
@@ -38,34 +36,19 @@ function report_error_and_exit(){
   "id": ${CONTAINER_ID:-0},
   "mtoken": "${MTOKEN}",
   "version": "${VERSION}",
-  "loadtime": 0,
-  "new_load": 0,
-  "cur_load": 0,
-  "rej_load": 0,
-  "max_perf": 0,
-  "cur_perf": 0,
   "error_msg": "${error_msg}",
-  "num_requests_working": 0,
-  "num_requests_recieved": 0,
-  "additional_disk_usage": 0,
-  "working_request_idxs": [],
-  "cur_capacity": 0,
-  "max_capacity": 0,
   "url": "${URL:-}"
 }
 JSON
 )" "${addr%/}/worker_status/" || true
     done
-    
+
     exit 1
 }
 
-[ -z "$BACKEND" ] && report_error_and_exit "BACKEND must be set!"
-[ -z "$MODEL_LOG" ] && report_error_and_exit "MODEL_LOG must be set!"
-[ -z "$HF_TOKEN" ] && report_error_and_exit "HF_TOKEN must be set!"
+[ -n "$BACKEND" ] && [ -z "$HF_TOKEN" ] && report_error_and_exit "HF_TOKEN must be set when BACKEND is set!"
 [ -z "$CONTAINER_ID" ] && report_error_and_exit "CONTAINER_ID must be set!"
 [ "$BACKEND" = "comfyui" ] && [ -z "$COMFY_MODEL" ] && report_error_and_exit "For comfyui backends, COMFY_MODEL must be set!"
-
 
 echo "start_server.sh"
 date
@@ -80,8 +63,6 @@ echo_var DEBUG_LOG
 echo_var PYWORKER_LOG
 echo_var MODEL_LOG
 
-# if instance is rebooted, we want to clear out the log file so pyworker doesn't read lines
-# from the run prior to reboot. past logs are saved in $MODEL_LOG.old for debugging only
 if [ -e "$MODEL_LOG" ]; then
     echo "Rotating model log at $MODEL_LOG to $MODEL_LOG.old"
     if ! cat "$MODEL_LOG" >> "$MODEL_LOG.old"; then
@@ -119,7 +100,6 @@ then
         fi
     fi
 
-    # Fork testing
     if [[ ! -d $SERVER_DIR ]]; then
         if ! git clone "${PYWORKER_REPO:-https://github.com/vast-ai/pyworker}" "$SERVER_DIR"; then
             report_error_and_exit "Failed to clone pyworker repository"
@@ -158,8 +138,6 @@ else
     echo "environment activated"
     echo "venv: $VIRTUAL_ENV"
 fi
-
-[ ! -d "$SERVER_DIR/workers/$BACKEND" ] && report_error_and_exit "$BACKEND not supported!"
 
 if [ "$USE_SSL" = true ]; then
 
@@ -204,9 +182,6 @@ EOF
     fi
 fi
 
-
-
-
 export REPORT_ADDR WORKER_PORT USE_SSL UNSECURED
 
 if ! cd "$SERVER_DIR"; then
@@ -216,12 +191,34 @@ fi
 echo "launching PyWorker server"
 
 set +e
-python3 -m "workers.$BACKEND.server" |& tee -a "$PYWORKER_LOG"
-PY_STATUS=${PIPESTATUS[0]}
+
+PY_STATUS=1
+
+if [ -f "$SERVER_DIR/worker.py" ]; then
+    echo "trying worker.py"
+    python3 -m "worker" |& tee -a "$PYWORKER_LOG"
+    PY_STATUS=${PIPESTATUS[0]}
+fi
+
+if [ "${PY_STATUS}" -ne 0 ] && [ -f "$SERVER_DIR/workers/$BACKEND/worker.py" ]; then
+    echo "trying workers.${BACKEND}.worker"
+    python3 -m "workers.${BACKEND}.worker" |& tee -a "$PYWORKER_LOG"
+    PY_STATUS=${PIPESTATUS[0]}
+fi
+
+if [ "${PY_STATUS}" -ne 0 ] && [ -f "$SERVER_DIR/workers/$BACKEND/server.py" ]; then
+    echo "trying workers.${BACKEND}.server"
+    python3 -m "workers.${BACKEND}.server" |& tee -a "$PYWORKER_LOG"
+    PY_STATUS=${PIPESTATUS[0]}
+fi
+
 set -e
 
 if [ "${PY_STATUS}" -ne 0 ]; then
-  report_error_and_exit "PyWorker exited with status ${PY_STATUS}"
+    if [ ! -f "$SERVER_DIR/worker.py" ] && [ ! -f "$SERVER_DIR/workers/$BACKEND/worker.py" ] && [ ! -f "$SERVER_DIR/workers/$BACKEND/server.py" ]; then
+        report_error_and_exit "Failed to find PyWorker"
+    fi
+    report_error_and_exit "PyWorker exited with status ${PY_STATUS}"
 fi
 
 echo "launching PyWorker server done"

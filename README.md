@@ -1,90 +1,152 @@
-# Vast PyWorker
+# Vast PyWorker Examples
 
-Vast PyWorker is a Python web server designed to run alongside a LLM or image generation models running on vast,
-enabling autoscaler integration.
-It serves as the primary entry point for API requests, forwarding them to the model's API hosted on the
-same instance. Additionally, it monitors performance metrics and estimates current workload based on factors
-such as the number of tokens processed for LLMs or image resolution and steps for image generation models,
-reporting these metrics to the autoscaler.
+This repository contains **example PyWorkers** used by Vast.ai’s default Serverless templates (e.g., vLLM, TGI, ComfyUI, Wan, ACE). A PyWorker is a lightweight Python HTTP proxy that runs alongside your model server and:
+
+- Exposes one or more HTTP routes (e.g., `/v1/completions`, `/generate/sync`)
+- Optionally validates/transforms request payloads
+- Computes per-request **workload** for autoscaling
+- Forwards requests to the local model server
+- Optionally supports FIFO queueing when the backend cannot process concurrent requests
+- Detects readiness/failure from model logs and runs a benchmark to estimate throughput
+
+> Important: The **core PyWorker framework** (Worker, WorkerConfig, HandlerConfig, BenchmarkConfig, LogActionConfig) is provided by the **`vastai` / `vastai-sdk`** Python package (https://github.com/vast-ai/vast-sdk). This repo focuses on *worker implementations and examples*, not the framework internals.
+
+## Repository Purpose
+
+Use this repository as:
+
+- A reference for how Vast templates wire up `worker.py`
+- A starting point for implementing your own custom Serverless PyWorker
+- A collection of working examples for common model backends
+
+If you are looking for the framework code itself, refer to the Vast.ai SDK.
 
 ## Project Structure
 
-*   `lib/`: Contains the core PyWorker framework code (server logic, data types, metrics).
-*   `workers/`: Contains specific implementations (PyWorkers) for different model servers. Each subdirectory represents a worker for a particular model type.
+Typical layout:
 
-## Getting Started
+- `workers/`
+  - Example worker implementations (each worker is usually a self-contained folder)
+  - Each example typically includes:
+    - `worker.py` (the entrypoint used by Serverless)
+    - Optional sample workflows / payloads (for ComfyUI-based workers)
+    - Optional local test harness scripts
 
-1.  **Install Dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-    You may also need `pyright` for type checking:
-    ```bash
-    sudo npm install -g pyright
-    # or use your preferred method to install pyright
-    ```
+## How Serverless launches worker.py
 
-2.  **Configure Environment:** Set any necessary environment variables (e.g., `MODEL_LOG` path, API keys if needed by your worker).
+On each worker instance, the template’s startup script typically:
 
-3.  **Run the Server:** Use the provided script. You'll need to specify which worker to run.
-    ```bash
-    # Example for hello_world worker (assuming MODEL_LOG is set)
-    ./start_server.sh workers.hello_world.server
-    ```
-    Replace `workers.hello_world.server` with the path to the `server.py` module of the worker you want to run.
+1. Clones your repository from `PYWORKER_REPO`
+2. Installs dependencies from `requirements.txt`
+3. Starts the **model server** (vLLM, TGI, ComfyUI, etc.)
+4. Runs:
+   ```bash
+   python worker.py
+   ```
 
-## How to Use
+Your `worker.py` builds a `WorkerConfig`, constructs a `Worker`, and starts the PyWorker HTTP server.
 
-### Using Existing Workers
+## worker.py
 
-If you are using a Vast.ai template that includes PyWorker integration (marked as autoscaler compatible), it should work out of the box. The template will typically start the appropriate PyWorker server automatically. Here's a few:
+A PyWorker is usually a single `worker.py` that uses SDK configuration objects:
 
-*   **vLLM:** [Vast.ai Template](https://cloud.vast.ai?ref_id=62897&template_id=63ae93902bf3978bea033782592b784d)
-*   **TGI (Text Generation Inference):** [Vast.ai Template](https://cloud.vast.ai?ref_id=62897&template_id=6fa6bd5bdf5f0df63db80e40b086037d)
-*   **ComfyUI:** [Vast.ai Template](https://cloud.vast.ai?ref_id=62897&template_id=e6748878ba688e765e3e9fca29541938)
+```python
+from vastai import (
+    Worker,
+    WorkerConfig,
+    HandlerConfig,
+    BenchmarkConfig,
+    LogActionConfig,
+)
 
-Currently available workers:
-*   `openai`: A simple example worker for a basic vLLM server.
-*   `comfyui`: A worker for the ComfyUI image generation backend.
-*   `tgi`: A worker for the Text Generation Inference backend.
+worker_config = WorkerConfig(
+    model_server_url="http://127.0.0.1",
+    model_server_port=18000,
+    model_log_file="/var/log/model/server.log",
+    handlers=[
+        HandlerConfig(
+            route="/v1/completions",
+            allow_parallel_requests=True,
+            max_queue_time=60.0,
+            workload_calculator=lambda payload: float(payload.get("max_tokens", 0)),
+            benchmark_config=BenchmarkConfig(
+                generator=lambda: {"prompt": "hello", "max_tokens": 128},
+                runs=8,
+                concurrency=10,
+            ),
+        )
+    ],
+    log_action_config=LogActionConfig(
+        on_load=["Application startup complete."],
+        on_error=["Traceback (most recent call last):", "RuntimeError:"],
+        on_info=['"message":"Download'],
+    ),
+)
 
-### Implementing a New Worker
-
-To integrate PyWorker with a model server not already supported, you need to create a new worker implementation under the `workers/` directory. Follow these general steps:
-
-1.  **Create Worker Directory:** Add a new directory under `workers/` (e.g., `workers/my_model/`).
-2.  **Define Data Types (`data_types.py`):**
-    *   Create a class inheriting from `lib.data_types.ApiPayload`.
-    *   Implement methods like `for_test`, `generate_payload_json`, `count_workload`, and `from_json_msg` to handle request data, testing, and workload calculation specific to your model's API.
-3.  **Implement Endpoint Handlers (`server.py`):**
-    *   For each model API endpoint you want PyWorker to proxy, create a class inheriting from `lib.data_types.EndpointHandler`.
-    *   Implement methods like `endpoint`, `payload_cls`, `generate_payload_json`, `make_benchmark_payload` (for one handler), and `generate_client_response`.
-    *   Instantiate `lib.backend.Backend` with your model server details, log file path, benchmark handler, and log actions.
-    *   Define `aiohttp` routes, mapping paths to your handlers using `backend.create_handler()`.
-    *   Use `lib.server.start_server` to run the application.
-4.  **Add `__init__.py`:** Create an empty `__init__.py` file in your worker directory.
-5.  **(Optional) Add Load Testing (`test_load.py`):** Create a script using `lib.test_harness.run` to test your worker against a Vast.ai endpoint group.
-6.  **(Optional) Add Client Example (`client.py`):** Provide a script demonstrating how to call your worker's endpoints.
-
-**For a detailed walkthrough, refer to the `hello_world` example:** [workers/hello_world/README.md](workers/hello_world/README.md)
-
-
-**Type Hinting:** It is strongly recommended to use strict type hinting throughout your implementation. Use `pyright` to check for type errors.
-
-## Testing Your Worker
-
-If you implement a `test_load.py` script for your worker, you can use it to load test a Vast.ai endpoint group running your instance image.
-
-```bash
-# Example for hello_world worker
-python3 -m workers.hello_world.test_load -n 1000 -rps 0.5 -k "$API_KEY" -e "$ENDPOINT_GROUP_NAME"
+Worker(worker_config).run()
 ```
 
-Replace `workers.hello_world.test_load` with the path to your worker's test script and provide your Vast.ai API Key (`-k`) and the target Endpoint Group Name (`-e`). Adjust the number of requests (`-n`) and requests per second (`-rps`) as needed.
+## Included Examples
+
+This repository contains example PyWorkers corresponding to common Vast templates, including:
+
+- **vLLM**: OpenAI-compatible completions/chat endpoints with parallel request support
+- **TGI (Text Generation Inference)**: OpenAI-compatible endpoints and log-based readiness
+- **ComfyUI (Image / JSON workflows)**: `/generate/sync` for ComfyUI workflow execution
+- **ComfyUI Wan 2.2 (T2V)**: ComfyUI workflow execution producing video outputs
+- **ComfyUI ACE Step (Text-to-Music)**: ComfyUI workflow execution producing audio outputs
+
+Exact worker paths and naming may vary by template; use the `workers/` directory as the source of truth.
+
+## Getting Started (Local)
+
+1. Install Python dependencies for the examples you plan to run:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. Start your model server locally (vLLM, TGI, ComfyUI, etc.) and ensure:
+   - You know the model server URL/port
+   - You have a log file path you can tail for readiness/error detection
+
+3. Run the worker:
+   ```bash
+   python worker.py
+   ```
+   or, if running an example from a subfolder:
+   ```bash
+   python workers/<example>/worker.py
+   ```
+
+> Note: Many examples assume they are running inside Vast templates (ports, log paths, model locations). You may need to adjust `model_server_port` and `model_log_file` for local usage.
+
+## Deploying on Vast Serverless
+
+To use a custom PyWorker with Serverless:
+
+1. Create a public Git repository containing:
+   - `worker.py`
+   - `requirements.txt`
+
+2. In your Serverless template / endpoint configuration, set:
+   - `PYWORKER_REPO` to your Git repository URL
+   - (Optional) `PYWORKER_REF` to a git ref (branch, tag, or commit)
+
+3. The template startup script will clone/install and run your `worker.py`.
+
+## Guidance for Custom Workers
+
+When implementing your own worker:
+
+- Define one `HandlerConfig` per route you want to expose.
+- Choose a workload function that correlates with compute cost:
+  - LLMs: prompt tokens + max output tokens (or `max_tokens` as a simpler proxy)
+  - Non-LLMs: constant cost per request (e.g., `100.0`) is often sufficient
+- Set `allow_parallel_requests=False` for backends that cannot handle concurrency (e.g., many ComfyUI deployments).
+- Configure exactly **one** `BenchmarkConfig` across all handlers to enable capacity estimation.
+- Use `LogActionConfig` to reliably detect “model loaded” and “fatal error” log lines.
 
 ## Community & Support
 
-Join the conversation and get help:
-
-*   **Vast.ai Discord:** [https://discord.gg/Pa9M29FFye](https://discord.gg/Pa9M29FFye)
-*   **Vast.ai Subreddit:** [https://reddit.com/r/vastai/](https://reddit.com/r/vastai/)
+- Vast.ai Discord: https://discord.gg/Pa9M29FFye
+- Vast.ai Subreddit: https://reddit.com/r/vastai/

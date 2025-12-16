@@ -102,15 +102,13 @@ async def call_completions(client: Serverless, *, model: str, prompt: str, endpo
     endpoint = await client.get_endpoint(name=endpoint_name)
 
     payload = {
-        "input": {
-            "model": model,
-            "prompt": prompt,
-            "max_tokens": kwargs.get("max_tokens", MAX_TOKENS),
-            "temperature": kwargs.get("temperature", DEFAULT_TEMPERATURE),
-        }
+        "model": model,
+        "prompt": prompt,
+        "max_tokens": kwargs.get("max_tokens", MAX_TOKENS),
+        "temperature": kwargs.get("temperature", DEFAULT_TEMPERATURE),
     }
     log.debug("POST /v1/completions %s", json.dumps(payload)[:500])
-    resp = await endpoint.request("/v1/completions", payload, cost=payload["input"]["max_tokens"])
+    resp = await endpoint.request("/v1/completions", payload, cost=payload["max_tokens"])
     return resp["response"]
 
 async def call_chat_completions(client: Serverless, *, model: str, messages: List[Dict[str, Any]], endpoint_name: str, **kwargs) -> Dict[str, Any]:
@@ -118,17 +116,15 @@ async def call_chat_completions(client: Serverless, *, model: str, messages: Lis
     endpoint = await client.get_endpoint(name=endpoint_name)
 
     payload = {
-        "input": {
-            "model": model,
-            "messages": messages,
-            "max_tokens": kwargs.get("max_tokens", MAX_TOKENS),
-            "temperature": kwargs.get("temperature", DEFAULT_TEMPERATURE),
-            **({"tools": kwargs["tools"]} if "tools" in kwargs else {}),
-            **({"tool_choice": kwargs["tool_choice"]} if "tool_choice" in kwargs else {}),
-        }
+        "model": model,
+        "messages": messages,
+        "max_tokens": kwargs.get("max_tokens", MAX_TOKENS),
+        "temperature": kwargs.get("temperature", DEFAULT_TEMPERATURE),
+        **({"tools": kwargs["tools"]} if "tools" in kwargs else {}),
+        **({"tool_choice": kwargs["tool_choice"]} if "tool_choice" in kwargs else {}),
     }
     log.debug("POST /v1/chat/completions %s", json.dumps(payload)[:500])
-    resp = await endpoint.request("/v1/chat/completions", payload, cost=payload["input"]["max_tokens"])
+    resp = await endpoint.request("/v1/chat/completions", payload, cost=payload["max_tokens"])
     return resp["response"]
 
 # ---- Streaming variants ----
@@ -137,17 +133,15 @@ async def stream_completions(client: Serverless, *, model: str, prompt: str, end
     endpoint = await client.get_endpoint(name=endpoint_name)
 
     payload = {
-        "input": {
-            "model": model,
-            "prompt": prompt,
-            "max_tokens": kwargs.get("max_tokens", MAX_TOKENS),
-            "temperature": kwargs.get("temperature", DEFAULT_TEMPERATURE),
-            "stream": True,
-            **({"stop": kwargs["stop"]} if "stop" in kwargs else {}),
-        }
+        "model": model,
+        "prompt": prompt,
+        "max_tokens": kwargs.get("max_tokens", MAX_TOKENS),
+        "temperature": kwargs.get("temperature", DEFAULT_TEMPERATURE),
+        "stream": True,
+        **({"stop": kwargs["stop"]} if "stop" in kwargs else {}),
     }
     log.debug("STREAM /v1/completions %s", json.dumps(payload)[:500])
-    resp = await endpoint.request("/v1/completions", payload, cost=payload["input"]["max_tokens"], stream=True)
+    resp = await endpoint.request("/v1/completions", payload, cost=payload["max_tokens"], stream=True)
     return resp["response"]  # async generator
 
 async def stream_chat_completions(client: Serverless, *, model: str, messages: List[Dict[str, Any]], endpoint_name: str, **kwargs):
@@ -155,18 +149,16 @@ async def stream_chat_completions(client: Serverless, *, model: str, messages: L
     endpoint = await client.get_endpoint(name=endpoint_name)
 
     payload = {
-        "input": {
-            "model": model,
-            "messages": messages,
-            "max_tokens": kwargs.get("max_tokens", MAX_TOKENS),
-            "temperature": kwargs.get("temperature", DEFAULT_TEMPERATURE),
-            "stream": True,
-            **({"tools": kwargs["tools"]} if "tools" in kwargs else {}),
-            **({"tool_choice": kwargs["tool_choice"]} if "tool_choice" in kwargs else {}),
-        }
+        "model": model,
+        "messages": messages,
+        "max_tokens": kwargs.get("max_tokens", MAX_TOKENS),
+        "temperature": kwargs.get("temperature", DEFAULT_TEMPERATURE),
+        "stream": True,
+        **({"tools": kwargs["tools"]} if "tools" in kwargs else {}),
+        **({"tool_choice": kwargs["tool_choice"]} if "tool_choice" in kwargs else {}),
     }
     log.debug("STREAM /v1/chat/completions %s", json.dumps(payload)[:500])
-    resp = await endpoint.request("/v1/chat/completions", payload, cost=payload["input"]["max_tokens"], stream=True)
+    resp = await endpoint.request("/v1/chat/completions", payload, cost=payload["max_tokens"], stream=True)
     return resp["response"]  # async generator
 
 

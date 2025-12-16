@@ -2,7 +2,7 @@
 
 This is the base PyWorker for ComfyUI. It provides a unified interface for running any ComfyUI workflow through a proxy-based architecture. See the [Serverless documentation](https://docs.vast.ai/serverless) for guides and how-to's.
 
-The cost for each request has a static value of `1`. ComfyUI does not handle concurrent workloads and there is no current provision to load multiple instances of ComfyUI per worker node.
+The cost for each request has a static value of `100`. ComfyUI does not handle concurrent workloads and there is no current provision to load multiple instances of ComfyUI per worker node.
 
 ## Instance Setup
 
@@ -302,3 +302,11 @@ WEBHOOK_TIMEOUT=30                   # Webhook timeout in seconds
   }
 }
 ```
+
+## Client Libraries
+
+See the client example for implementation details on how to integrate with the ComfyUI worker.
+
+---
+
+See Vast's serverless documentation for more details on how to use ComfyUI with autoscaler.

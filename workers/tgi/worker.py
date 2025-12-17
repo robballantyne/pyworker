@@ -52,7 +52,7 @@ worker_config = WorkerConfig(
         HandlerConfig(
             route="/generate",
             allow_parallel_requests=True,
-            max_queue_time=60.0,
+            max_queue_time=600.0,
             benchmark_config=BenchmarkConfig(
                 generator=benchmark_generator,
                 concurrency=50
@@ -62,7 +62,7 @@ worker_config = WorkerConfig(
         HandlerConfig(
             route="/generate_stream",
             allow_parallel_requests=True,
-            max_queue_time=60.0,
+            max_queue_time=600.0,
             workload_calculator= lambda x: x["parameters"]["max_new_tokens"]
         )
     ],

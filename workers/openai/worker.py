@@ -72,7 +72,7 @@ worker_config = WorkerConfig(
             route="/v1/chat/completions",
             workload_calculator= lambda data: data.get("max_tokens", 0),
             allow_parallel_requests=True,
-            request_parser=request_parser
+            request_parser=request_parser,
             max_queue_time=600.0,
         )
     ],

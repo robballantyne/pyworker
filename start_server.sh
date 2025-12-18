@@ -46,6 +46,21 @@ JSON
     exit 1
 }
 
+function install_vastai_sdk() {
+    if [ -n "${SDK_VERSION:-}" ]; then
+        echo "Installing vastai-sdk version ${SDK_VERSION}"
+        if ! uv pip install "vastai-sdk==${SDK_VERSION}"; then
+            report_error_and_exit "Failed to install vastai-sdk==${SDK_VERSION}"
+        fi
+    else
+        echo "Installing default vastai-sdk"
+        if ! uv pip install vastai-sdk; then
+            report_error_and_exit "Failed to install vastai-sdk"
+        fi
+    fi
+}
+
+
 [ -n "$BACKEND" ] && [ -z "$HF_TOKEN" ] && report_error_and_exit "HF_TOKEN must be set when BACKEND is set!"
 [ -z "$CONTAINER_ID" ] && report_error_and_exit "CONTAINER_ID must be set!"
 [ "$BACKEND" = "comfyui" ] && [ -z "$COMFY_MODEL" ] && report_error_and_exit "For comfyui backends, COMFY_MODEL must be set!"
@@ -122,6 +137,8 @@ then
     if ! uv pip install -r "${SERVER_DIR}/requirements.txt"; then
         report_error_and_exit "Failed to install Python requirements"
     fi
+
+    install_vastai_sdk
 
     if ! touch ~/.no_auto_tmux; then
         report_error_and_exit "Failed to create ~/.no_auto_tmux"

@@ -1,0 +1,122 @@
+[
+  {
+    "query": "What is the capital of France?",
+    "document": "Paris is the capital and largest city of France."
+  },
+  {
+    "query": "Who painted the Mona Lisa?",
+    "document": "The Mona Lisa was painted by Leonardo da Vinci."
+  },
+  {
+    "query": "What is the chemical formula for water?",
+    "document": "The chemical formula for water is H2O."
+  },
+  {
+    "query": "How many legs does a spider have?",
+    "document": "A spider has eight legs."
+  },
+  {
+    "query": "What is the atomic number of carbon?",
+    "document": "Carbon has an atomic number of 6."
+  },
+  {
+    "query": "Who wrote Hamlet?",
+    "document": "Hamlet was written by William Shakespeare."
+  },
+  {
+    "query": "What is the capital of Japan?",
+    "document": "Tokyo is the capital city of Japan."
+  },
+  {
+    "query": "How many hours are in a day?",
+    "document": "There are 24 hours in a day."
+  },
+  {
+    "query": "What is the speed of light?",
+    "document": "The speed of light is approximately 300,000 kilometers per second."
+  },
+  {
+    "query": "Who discovered gravity?",
+    "document": "Isaac Newton is credited with discovering the laws of gravity."
+  },
+  {
+    "query": "How does photosynthesis work?",
+    "document": "Photosynthesis is the process by which green plants and certain other organisms transform light energy into chemical energy. During photosynthesis, plants capture light energy and use it to convert water, carbon dioxide, and minerals into oxygen and energy-rich organic compounds."
+  },
+  {
+    "query": "What causes earthquakes and how are they measured?",
+    "document": "Earthquakes occur when tectonic plates beneath the Earth's surface suddenly slip past each other, releasing stored energy as seismic waves. They are measured using seismographs, and their magnitude is typically reported on the Richter scale or the more modern moment magnitude scale."
+  },
+  {
+    "query": "Explain how the human immune system fights infections.",
+    "document": "The human immune system defends against infections through multiple mechanisms. White blood cells identify and attack pathogens, antibodies neutralize specific threats, and the inflammatory response helps isolate and eliminate invaders. Memory cells remember past infections for faster future responses."
+  },
+  {
+    "query": "What is machine learning and how does it differ from traditional programming?",
+    "document": "Machine learning is a subset of artificial intelligence where systems learn patterns from data rather than following explicitly programmed rules. Unlike traditional programming where developers write specific instructions, ML algorithms improve their performance through experience and exposure to more data."
+  },
+  {
+    "query": "Describe the water cycle and its importance to Earth's ecosystems.",
+    "document": "The water cycle describes the continuous movement of water through evaporation, condensation, precipitation, and collection. Water evaporates from oceans and lakes, forms clouds, falls as rain or snow, and flows back to bodies of water. This cycle is essential for distributing fresh water and regulating climate."
+  },
+  {
+    "query": "How do vaccines work to prevent disease?",
+    "document": "Vaccines work by training the immune system to recognize and fight specific pathogens without causing the disease. They contain weakened or inactive parts of viruses or bacteria that trigger an immune response. The body then produces antibodies and memory cells that provide protection against future infections."
+  },
+  {
+    "query": "What is the greenhouse effect and its role in climate change?",
+    "document": "The greenhouse effect occurs when gases in Earth's atmosphere trap heat from the sun, warming the planet's surface. While this natural process makes Earth habitable, increased concentrations of greenhouse gases from human activities are enhancing this effect, leading to global warming and climate change."
+  },
+  {
+    "query": "Explain the process of cellular respiration in living organisms.",
+    "document": "Cellular respiration is the process by which cells break down glucose to produce ATP, the energy currency of cells. It occurs in three stages: glycolysis in the cytoplasm, the citric acid cycle, and oxidative phosphorylation in the mitochondria. This process requires oxygen and produces carbon dioxide and water as byproducts."
+  },
+  {
+    "query": "What is the difference between weather and climate?",
+    "document": "Weather refers to short-term atmospheric conditions in a specific place, including temperature, humidity, precipitation, and wind. Climate describes the average weather patterns in a region over long periods, typically 30 years or more. Weather can change within hours, while climate changes occur over decades or centuries."
+  },
+  {
+    "query": "How does the human digestive system process food?",
+    "document": "The digestive system breaks down food through mechanical and chemical processes. Digestion begins in the mouth with chewing and saliva, continues in the stomach with acid and enzymes, and completes in the small intestine where nutrients are absorbed. The large intestine absorbs water before waste is eliminated."
+  },
+  {
+    "query": "Provide a comprehensive explanation of how neural networks function in artificial intelligence applications.",
+    "document": "Neural networks are computing systems inspired by biological neural networks in the human brain. They consist of interconnected nodes or neurons organized in layers: an input layer, one or more hidden layers, and an output layer. Each connection between neurons has an associated weight that adjusts during training. When data passes through the network, each neuron applies an activation function to determine whether and how strongly to pass the signal forward. During training, the network uses backpropagation to adjust weights based on the error between predicted and actual outputs. This process is repeated thousands or millions of times until the network achieves acceptable accuracy. Modern deep learning uses networks with many hidden layers to learn increasingly abstract representations of data."
+  },
+  {
+    "query": "Describe the complete process of how a bill becomes a law in the United States government.",
+    "document": "The legislative process in the United States begins when a member of Congress introduces a bill in either the House of Representatives or the Senate. The bill is then assigned to a committee that specializes in the relevant policy area. The committee reviews the bill, may hold hearings, and can make amendments before voting on whether to send it to the full chamber. If approved by the committee, the bill goes to the floor for debate and voting. If it passes one chamber, it moves to the other chamber where the process repeats. If both chambers pass different versions, a conference committee reconciles the differences. Once both chambers approve identical versions, the bill goes to the President, who can sign it into law or veto it. Congress can override a veto with a two-thirds vote in both chambers."
+  },
+  {
+    "query": "Explain the theory of evolution by natural selection and the evidence supporting it.",
+    "document": "Evolution by natural selection, first proposed by Charles Darwin, explains how species change over time through differential survival and reproduction. Individuals within a population exhibit variation in traits, some of which are heritable. Those with traits better suited to their environment are more likely to survive and reproduce, passing these advantageous traits to offspring. Over many generations, this leads to adaptation and eventually the emergence of new species. Evidence supporting evolution includes the fossil record showing transitional forms, comparative anatomy revealing homologous structures across species, molecular biology demonstrating shared DNA sequences, direct observation of evolution in bacteria and other organisms, and biogeography showing how species distribution reflects evolutionary history."
+  },
+  {
+    "query": "Describe the structure and function of DNA and its role in heredity and protein synthesis.",
+    "document": "DNA, or deoxyribonucleic acid, is a double helix molecule composed of nucleotides containing a sugar, phosphate group, and one of four nitrogenous bases: adenine, thymine, guanine, or cytosine. The bases pair specifically, with adenine binding to thymine and guanine to cytosine, allowing DNA to replicate accurately. DNA stores genetic information in the sequence of these bases. Genes are segments of DNA that encode instructions for building proteins. During transcription, the DNA sequence is copied into messenger RNA, which travels to ribosomes where translation occurs. Transfer RNA molecules bring amino acids that are assembled into proteins according to the mRNA sequence. These proteins perform most cellular functions and determine an organism's traits."
+  },
+  {
+    "query": "Explain the causes, major events, and consequences of World War I.",
+    "document": "World War I, lasting from 1914 to 1918, resulted from a complex web of factors including nationalism, imperialism, militarism, and alliance systems. The assassination of Archduke Franz Ferdinand of Austria-Hungary triggered a chain reaction of declarations of war across Europe. The conflict introduced trench warfare, chemical weapons, tanks, and aircraft to modern combat, resulting in unprecedented casualties. Major events included the Battle of the Somme, the Battle of Verdun, and eventually American entry in 1917. The war ended with the armistice of November 1918 and was formally concluded by the Treaty of Versailles. Consequences included the collapse of four empires, the redrawing of European borders, the establishment of the League of Nations, and conditions that contributed to World War II."
+  },
+  {
+    "query": "Describe how the human cardiovascular system works and its main components.",
+    "document": "The human cardiovascular system is a closed circulatory system consisting of the heart, blood vessels, and blood. The heart is a four-chambered muscular organ that pumps blood throughout the body. The right side receives deoxygenated blood from the body and pumps it to the lungs, while the left side receives oxygenated blood from the lungs and pumps it to the rest of the body. Arteries carry blood away from the heart, branching into smaller arterioles and then capillaries where gas and nutrient exchange occurs. Veins return blood to the heart, using valves to prevent backflow. Blood carries oxygen, nutrients, hormones, and waste products, and contains red blood cells, white blood cells, platelets, and plasma. The system is regulated by the autonomic nervous system and various hormones."
+  },
+  {
+    "query": "Explain the principles of supply and demand in economics and how they determine market prices.",
+    "document": "Supply and demand are fundamental economic concepts that describe how prices are determined in a market economy. Demand represents consumers' willingness and ability to purchase goods at various prices, typically decreasing as price increases. Supply represents producers' willingness to sell at various prices, typically increasing as price rises. The market equilibrium price occurs where supply equals demand. When price is above equilibrium, surplus occurs, pushing prices down. When price is below equilibrium, shortage occurs, pushing prices up. Various factors shift these curves: consumer income, preferences, and expectations affect demand; production costs, technology, and number of sellers affect supply. Government interventions like price controls, taxes, and subsidies can also impact market outcomes. Understanding these dynamics is essential for business decisions and economic policy."
+  },
+  {
+    "query": "Describe the process of plate tectonics and how it shapes Earth's surface features.",
+    "document": "Plate tectonics is the theory explaining how Earth's lithosphere is divided into large plates that move over the asthenosphere. These plates, driven by convection currents in the mantle, interact at three types of boundaries. At divergent boundaries, plates move apart and new crust forms from rising magma, creating mid-ocean ridges and rift valleys. At convergent boundaries, plates collide, causing subduction, mountain formation, or continental collision. At transform boundaries, plates slide past each other, creating fault lines like the San Andreas Fault. These processes explain the distribution of earthquakes and volcanoes along plate boundaries, the formation of mountain ranges like the Himalayas, the opening and closing of ocean basins, and the movement of continents over geological time. Evidence includes the fit of continental coastlines, fossil distributions, and matching geological formations across oceans."
+  },
+  {
+    "query": "Explain how the Internet works and the key technologies that enable global connectivity.",
+    "document": "The Internet is a global network of interconnected computer networks that communicate using standardized protocols. Data is broken into packets, each containing source and destination addresses, which travel independently across the network. Routers direct packets along optimal paths, and the Transmission Control Protocol ensures reliable delivery by requesting retransmission of lost packets. The Domain Name System translates human-readable addresses into IP addresses. Physical infrastructure includes fiber optic cables spanning continents and oceans, data centers housing servers, and Internet exchange points where networks interconnect. The World Wide Web, built on top of the Internet, uses HTTP to transfer web pages written in HTML. Modern Internet services rely on cloud computing, content delivery networks, and increasingly sophisticated security protocols to protect data in transit."
+  },
+  {
+    "query": "Describe the formation of the solar system and the characteristics of its major components.",
+    "document": "The solar system formed approximately 4.6 billion years ago from a giant molecular cloud of gas and dust. Gravitational collapse caused the cloud to spin and flatten into a disk, with most mass concentrating at the center to form the Sun. In the remaining disk, particles collided and stuck together, gradually forming planetesimals and eventually planets through accretion. The inner rocky planets formed from materials that could withstand the Sun's heat, while gas giants formed in the cooler outer regions where volatile compounds could condense. The asteroid belt between Mars and Jupiter contains rocky remnants that never formed a planet due to Jupiter's gravitational influence. The outer solar system includes the Kuiper Belt and Oort Cloud, containing icy bodies and the source of many comets. Moons formed through various processes including capture, co-formation, and giant impacts."
+  }
+]

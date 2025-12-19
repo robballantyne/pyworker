@@ -1,5 +1,7 @@
+import json
 import os
 from itertools import cycle
+from pathlib import Path
 
 from vastai import Worker, WorkerConfig, HandlerConfig, LogActionConfig, BenchmarkConfig
 
@@ -24,62 +26,13 @@ MODEL_INFO_LOG_MSGS = [
     '"message":"Download'
 ]
 
-# Benchmark text pairs for scoring - factual Q&A pairs that should score high
-# Each tuple is (query, document) representing a relevant match
-BENCHMARK_TEXT_PAIRS = [
-    ("What is the capital of France?", "Paris is the capital and largest city of France."),
-    ("How does photosynthesis work?", "Photosynthesis converts sunlight, water, and carbon dioxide into glucose and oxygen."),
-    ("What is the speed of light?", "The speed of light in a vacuum is approximately 299,792 kilometers per second."),
-    ("Who wrote Romeo and Juliet?", "Romeo and Juliet was written by William Shakespeare around 1594."),
-    ("What causes earthquakes?", "Earthquakes occur when tectonic plates suddenly slip past each other."),
-    ("What is the largest planet in our solar system?", "Jupiter is the largest planet in our solar system."),
-    ("How many bones are in the human body?", "An adult human body contains 206 bones."),
-    ("What is the chemical formula for water?", "The chemical formula for water is H2O."),
-    ("Who painted the Mona Lisa?", "The Mona Lisa was painted by Leonardo da Vinci."),
-    ("What is the tallest mountain on Earth?", "Mount Everest is the tallest mountain on Earth at 8,849 meters."),
-    ("What year did World War II end?", "World War II ended in 1945."),
-    ("What is the largest ocean on Earth?", "The Pacific Ocean is the largest ocean on Earth."),
-    ("How many continents are there?", "There are seven continents on Earth."),
-    ("What is the freezing point of water?", "Water freezes at 0 degrees Celsius or 32 degrees Fahrenheit."),
-    ("Who invented the telephone?", "Alexander Graham Bell invented the telephone in 1876."),
-    ("What is the capital of Japan?", "Tokyo is the capital city of Japan."),
-    ("How many planets are in our solar system?", "There are eight planets in our solar system."),
-    ("What is DNA?", "DNA is a molecule that carries genetic instructions for living organisms."),
-    ("Who was the first person to walk on the moon?", "Neil Armstrong was the first person to walk on the moon in 1969."),
-    ("What is the largest mammal?", "The blue whale is the largest mammal on Earth."),
-    ("What is the boiling point of water?", "Water boils at 100 degrees Celsius or 212 degrees Fahrenheit."),
-    ("Who discovered penicillin?", "Alexander Fleming discovered penicillin in 1928."),
-    ("What is the longest river in the world?", "The Nile is the longest river in the world at about 6,650 kilometers."),
-    ("What is the hardest natural substance?", "Diamond is the hardest natural substance on Earth."),
-    ("Who wrote the theory of relativity?", "Albert Einstein wrote the theory of relativity."),
-    ("What is the smallest country in the world?", "Vatican City is the smallest country in the world."),
-    ("How many hours are in a day?", "There are 24 hours in a day."),
-    ("What is the capital of Australia?", "Canberra is the capital city of Australia."),
-    ("What element does the symbol Au represent?", "Au is the chemical symbol for gold."),
-    ("Who invented the light bulb?", "Thomas Edison invented the practical incandescent light bulb."),
-    ("What is the Great Wall of China?", "The Great Wall of China is a series of fortifications stretching over 13,000 miles."),
-    ("What is the currency of the United Kingdom?", "The currency of the United Kingdom is the British Pound Sterling."),
-    ("How many days are in a leap year?", "A leap year has 366 days."),
-    ("What is the largest desert on Earth?", "The Sahara is the largest hot desert on Earth."),
-    ("Who wrote Hamlet?", "Hamlet was written by William Shakespeare."),
-    ("What is the atomic number of carbon?", "Carbon has an atomic number of 6."),
-    ("What is the capital of Germany?", "Berlin is the capital city of Germany."),
-    ("How many teeth does an adult human have?", "An adult human typically has 32 teeth."),
-    ("What is the largest bird in the world?", "The ostrich is the largest living bird in the world."),
-    ("Who painted the Sistine Chapel ceiling?", "Michelangelo painted the Sistine Chapel ceiling."),
-    ("What is the main component of the Sun?", "The Sun is primarily composed of hydrogen."),
-    ("What year was the Declaration of Independence signed?", "The Declaration of Independence was signed in 1776."),
-    ("What is the capital of Brazil?", "Brasilia is the capital city of Brazil."),
-    ("How many legs does a spider have?", "A spider has eight legs."),
-    ("What is the largest continent?", "Asia is the largest continent by both area and population."),
-    ("Who developed the polio vaccine?", "Jonas Salk developed the polio vaccine in 1955."),
-    ("What is the chemical symbol for iron?", "The chemical symbol for iron is Fe."),
-    ("What is the capital of Canada?", "Ottawa is the capital city of Canada."),
-    ("How fast does sound travel?", "Sound travels at approximately 343 meters per second in air at room temperature."),
-    ("What is the largest organ in the human body?", "The skin is the largest organ in the human body."),
-]
+# Load benchmark pairs from JSON file
+_benchmark_file = Path(__file__).parent / "benchmark_pairs.json"
+with open(_benchmark_file) as f:
+    _benchmark_data = json.load(f)
 
-# Create a cycling iterator for benchmark pairs
+# Convert to list of tuples and create cycling iterator
+BENCHMARK_TEXT_PAIRS = [(pair["query"], pair["document"]) for pair in _benchmark_data]
 _benchmark_iterator = cycle(BENCHMARK_TEXT_PAIRS)
 
 
@@ -89,6 +42,20 @@ def request_parser(request):
     if request.get("input") is not None:
         data = request.get("input")
     return data
+
+
+def estimate_token_count(data: dict) -> int:
+    """
+    Estimate token count from text_1 and text_2 arrays using word count.
+    Word count is a reasonable approximation for English text.
+    Used for both benchmark and per-request workload calculation.
+    """
+    total_words = 0
+    for text_list in [data.get("text_1", []), data.get("text_2", [])]:
+        for text in text_list:
+            if isinstance(text, str):
+                total_words += len(text.split())
+    return max(total_words, 1)  # Ensure at least 1 to avoid zero workload
 
 
 def score_benchmark_generator() -> dict:
@@ -117,7 +84,7 @@ worker_config = WorkerConfig(
     handlers=[
         HandlerConfig(
             route="/score",
-            workload_calculator=lambda data: len(data.get("text_1", [])),
+            workload_calculator=estimate_token_count,
             allow_parallel_requests=True,
             request_parser=request_parser,
             max_queue_time=600.0,

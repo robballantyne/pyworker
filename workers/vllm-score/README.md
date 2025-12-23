@@ -21,12 +21,8 @@ The `/score` endpoint accepts text pairs and returns similarity/relevance scores
 ```json
 {
   "model": "Qwen/Qwen3-Reranker-0.6B",
-  "text_1": [
-    "Query or instruction text"
-  ],
-  "text_2": [
-    "Document text to score"
-  ]
+  "text_1": ["Query or instruction text"],
+  "text_2": ["Document text to score"]
 }
 ```
 
@@ -53,9 +49,9 @@ The `/score` endpoint accepts text pairs and returns similarity/relevance scores
 }
 ```
 
-## Client Setup (Demo)
+## Client Setup
 
-1. Clone the PyWorker repository to your local machine and install the necessary requirements.
+1. Clone the PyWorker repository and install dependencies:
 
 ```bash
 git clone https://github.com/vast-ai/pyworker
@@ -66,34 +62,45 @@ source .venv/bin/activate
 uv pip install -r requirements.txt
 ```
 
-## Using the Test Client
-
-First, set your API key as an environment variable:
+2. Set your API key:
 
 ```bash
 export VAST_API_KEY=<your_api_key>
 ```
 
-### Simple Score Test
+## Using the Test Client
 
-Test scoring with a single query-document pair:
+### Simple Score
 
-```bash
-python -m workers.vllm_score.client --simple --endpoint <ENDPOINT_NAME> --model <MODEL_NAME>
-```
-
-### Batch Score Test
-
-Test batch scoring with multiple pairs:
+Basic query-document scoring:
 
 ```bash
-python -m workers.vllm_score.client --batch --endpoint <ENDPOINT_NAME> --model <MODEL_NAME>
+python -m workers.vllm_score.client --simple --endpoint <ENDPOINT_NAME>
 ```
 
-### Reranker Format Test
+### Instruction Format
 
-Test with instruction-formatted prompts typical for reranker models:
+Instruction-formatted scoring (typical for reranker models):
 
 ```bash
-python -m workers.vllm_score.client --reranker --endpoint <ENDPOINT_NAME> --model <MODEL_NAME>
+python -m workers.vllm_score.client --instruct --endpoint <ENDPOINT_NAME>
 ```
+
+### Batch Mode
+
+Send multiple pairs (first is real, rest are garbage for load testing):
+
+```bash
+python -m workers.vllm_score.client --simple --batch 10 --endpoint <ENDPOINT_NAME>
+python -m workers.vllm_score.client --instruct --batch 50 --endpoint <ENDPOINT_NAME>
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--simple` | Simple query-document scoring |
+| `--instruct` | Instruction-formatted scoring |
+| `--batch N` | Send N pairs (first real, rest garbage) |
+| `--model` | Model name (default: `Qwen/Qwen3-Reranker-0.6B`) |
+| `--endpoint` | Endpoint name (default: `my-vllm-score-endpoint`) |

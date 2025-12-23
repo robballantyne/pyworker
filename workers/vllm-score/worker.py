@@ -5,6 +5,8 @@ from pathlib import Path
 
 from vastai import Worker, WorkerConfig, HandlerConfig, LogActionConfig, BenchmarkConfig
 
+from .utils import estimate_token_count
+
 # vLLM model configuration
 MODEL_SERVER_URL           = 'http://127.0.0.1'
 MODEL_SERVER_PORT          = 18000
@@ -42,20 +44,6 @@ def request_parser(request):
     if request.get("input") is not None:
         data = request.get("input")
     return data
-
-
-def estimate_token_count(data: dict) -> int:
-    """
-    Estimate token count from text_1 and text_2 arrays using word count.
-    Word count is a reasonable approximation for English text.
-    Used for both benchmark and per-request workload calculation.
-    """
-    total_words = 0
-    for text_list in [data.get("text_1", []), data.get("text_2", [])]:
-        for text in text_list:
-            if isinstance(text, str):
-                total_words += len(text.split())
-    return max(total_words, 1)  # Ensure at least 1 to avoid zero workload
 
 
 def score_benchmark_generator() -> dict:

@@ -8,7 +8,8 @@ This PyWorker provides support for vLLM's `/score` endpoint, typically used with
 
 This worker is compatible with vLLM backends that support the `/score` endpoint for reranking/scoring tasks.
 
-- [vLLM](https://cloud.vast.ai/?ref_id=62897&creator_id=62897&name=vLLM%20(Serverless)) with a reranker model
+- [vLLM + Qwen3-Reranker-0.6B](https://cloud.vast.ai?ref_id=145102&template_id=89aab9c71caf4a133ae46c79523b81ba)
+- [vLLM + Qwen3-Reranker-4B](https://cloud.vast.ai?ref_id=145102&template_id=1b0bae2b77e110dffeda458f1ec8368f)
 
 2. Follow the [getting started guide](https://docs.vast.ai/documentation/serverless/quickstart) for help with configuring your serverless setup.
 
@@ -75,7 +76,7 @@ export VAST_API_KEY=<your_api_key>
 Basic query-document scoring:
 
 ```bash
-python -m workers.vllm_score.client --simple --endpoint <ENDPOINT_NAME>
+python -m workers.vllm-score.client --simple --endpoint <ENDPOINT_NAME>
 ```
 
 ### Instruction Format
@@ -83,7 +84,7 @@ python -m workers.vllm_score.client --simple --endpoint <ENDPOINT_NAME>
 Instruction-formatted scoring (typical for reranker models):
 
 ```bash
-python -m workers.vllm_score.client --instruct --endpoint <ENDPOINT_NAME>
+python -m workers.vllm-score.client --instruct --endpoint <ENDPOINT_NAME>
 ```
 
 ### Batch Mode
@@ -91,8 +92,8 @@ python -m workers.vllm_score.client --instruct --endpoint <ENDPOINT_NAME>
 Send multiple pairs (first is real, rest are garbage for load testing):
 
 ```bash
-python -m workers.vllm_score.client --simple --batch 10 --endpoint <ENDPOINT_NAME>
-python -m workers.vllm_score.client --instruct --batch 50 --endpoint <ENDPOINT_NAME>
+python -m workers.vllm-score.client --simple --batch 10 --endpoint <ENDPOINT_NAME>
+python -m workers.vllm-score.client --instruct --batch 50 --endpoint <ENDPOINT_NAME>
 ```
 
 ### Options

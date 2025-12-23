@@ -4,7 +4,7 @@
 def estimate_token_count(data: dict) -> int:
     """
     Estimate token count from text_1 and text_2 arrays using word count * 1.4.
-    Use a tokenizer for accuracy
+    Use a tokenizer for improved accuracy
     Used for both benchmark and per-request workload calculation.
 
     Args:

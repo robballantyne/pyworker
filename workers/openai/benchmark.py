@@ -25,8 +25,72 @@ import nltk
 # benchmark recovers the model id from it. Only one is ever set.
 _MODEL_NAME_VARS = ("MODEL_NAME", "VLLM_MODEL", "SGLANG_MODEL", "LLAMA_MODEL")
 
-nltk.download("words")
-WORD_LIST = nltk.corpus.words.words()
+# The corpus is a RUNTIME DOWNLOAD, not a pip dependency: requirements.txt installs the
+# nltk package, and nltk then fetches `words` over the network the first time it is used.
+# On a fresh worker that cannot reach the CDN -- offline, rate-limited, or simply behind
+# a proxy, which nltk now refuses to fetch through by default (CWE-918 hardening) -- the
+# corpus lookup raises LookupError AT IMPORT, and since core.py imports this module that
+# takes the whole worker down, every route with it, not just the benchmark. Measured on
+# a clean HOME with the network blocked.
+#
+# So the corpus stays the preferred source (identical benchmark payloads to every run
+# before this, and the tgi worker uses it too) and a builtin list is the floor.
+_FALLBACK_WORDS = (
+    "absence action amount animal answer autumn balance barrier beacon border bottle "
+    "branch bridge builder candle canvas carpet caution central chamber change circle "
+    "clarity cluster coastal command compass concert content copper corner cotton "
+    "council counter courage crystal culture current custom damage danger declare "
+    "deliver density deposit desert detail develop device diamond digital distance "
+    "district drawing driver eastern economy edition element energy engine evening "
+    "example exhibit expert fabric factor family feather feature figure filter "
+    "finance fixture flavour forest formal fortune forward founder fragment freedom "
+    "friend function furnace gallery garden gateway gather general gesture glacier "
+    "granite gravity ground habitat harbour harvest heading healthy hearing heavy "
+    "helper history holiday horizon hunter husband illness imagine impact improve "
+    "include initial inside instant invite island jacket journey justice keeper "
+    "kitchen ladder landing language lantern leader leather lecture legend length "
+    "lesson letter liberty library license lighting limited liquid listen litter "
+    "machine magnet manner marble margin market master matter meadow measure medical "
+    "meeting member memory mention message metal method middle mineral minute mirror "
+    "mixture modern moment monitor morning mother motion mountain museum musical "
+    "narrow nation native natural neither network neutral nothing notice number "
+    "object observe ocean office opening operate opinion orange orbit order organic "
+    "origin outdoor outline output palace parcel parent partner passage pattern "
+    "payment pencil people perfect period person picture pioneer planet plastic "
+    "player pocket poetry portion position possible powder prairie precise prepare "
+    "present pressure primary printer private problem process produce program project "
+    "promise protect provide public purpose quality quarter question quiet rabbit "
+    "radius railway rainbow random reader reason recover reflect region regular "
+    "related release remain remote repair report request reserve resolve respect "
+    "result return reveal ribbon river roster routine sample sandy scatter science "
+    "season second section segment select senior series service session settle "
+    "shadow shelter signal silence silver similar simple singer sister skill slope "
+    "social soldier solid source special speech spirit spring square stable station "
+    "steady stone storage stream street strong studio subject success sudden summer "
+    "sunset supply support surface survey symbol system table talent target teacher "
+    "temple tender tension theory thread through thunder timber tissue title toward "
+    "traffic transfer travel treasure treaty triangle tribute trouble tunnel turning "
+    "uniform unique united unusual update upper urgent useful valley value vapour "
+    "various vehicle velvet verdict version vessel victory village vintage violet "
+    "virtue vision visitor voice volume voyage wander warning water weather weaving "
+    "welcome western whisper willow window winter wisdom wonder wooden worker "
+    "working worthy writing yellow"
+).split()
+
+
+def _load_words():
+    try:
+        nltk.download("words", quiet=True)
+        words = nltk.corpus.words.words()
+        if words:
+            return words
+    except Exception as exc:
+        print(f"WARNING: nltk words corpus unavailable ({type(exc).__name__}); "
+              f"benchmarking with the builtin word list", flush=True)
+    return list(_FALLBACK_WORDS)
+
+
+WORD_LIST = _load_words()
 
 WAV_RATE = 16000
 WAV_BYTES_PER_SECOND = WAV_RATE * 2     # 16-bit mono

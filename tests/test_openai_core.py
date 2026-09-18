@@ -711,3 +711,50 @@ class TestAudioDuration(unittest.TestCase):
         for ext in core.AUDIO_TYPES:
             with self.subTest(ext):
                 self.assertIn(ext, core.AUDIO_BYTES_PER_SECOND)
+
+
+class TestBenchmarkWordSource(unittest.TestCase):
+    """The nltk `words` corpus is a RUNTIME DOWNLOAD, not a pip dependency:
+    requirements.txt installs the package, and the corpus is fetched over the network on
+    first use. Measured on a clean HOME with the network blocked, that lookup raises
+    LookupError AT IMPORT -- and core.py imports this module, so the whole worker dies,
+    every route with it, over a word list used only to build benchmark prompts.
+
+    It is not only an offline problem: nltk's CWE-918 hardening refuses to fetch through
+    a proxy at all ("Security Violation [pathsec.urlopen]"), so a proxied instance never
+    gets the corpus however good its connectivity.
+    """
+
+    def setUp(self):
+        from workers.openai import benchmark
+        self.bm = benchmark
+
+    def test_the_corpus_is_used_when_it_is_there(self):
+        """Unchanged behaviour where it works, so benchmark payloads -- and therefore
+        the scores they produce -- stay comparable with every run before this."""
+        fake = mock.MagicMock()
+        fake.corpus.words.words.return_value = ["alpha", "beta", "gamma"]
+        with mock.patch.object(self.bm, "nltk", fake):
+            self.assertEqual(self.bm._load_words(), ["alpha", "beta", "gamma"])
+
+    def test_a_missing_corpus_does_not_stop_the_worker(self):
+        fake = mock.MagicMock()
+        fake.download.side_effect = LookupError("no corpus and no network")
+        with mock.patch.object(self.bm, "nltk", fake), mock.patch("builtins.print"):
+            words = self.bm._load_words()
+        self.assertGreater(len(words), 100, "the floor must still make varied prompts")
+
+    def test_an_empty_corpus_falls_back_too(self):
+        """nltk can return an empty list rather than raising; an empty WORD_LIST makes
+        random.choices raise later, at benchmark time, far from the cause."""
+        fake = mock.MagicMock()
+        fake.corpus.words.words.return_value = []
+        with mock.patch.object(self.bm, "nltk", fake), mock.patch("builtins.print"):
+            self.assertGreater(len(self.bm._load_words()), 100)
+
+    def test_the_builtin_list_can_fill_a_benchmark_payload(self):
+        """The largest text payload is the embeddings one, at REF_EMBED_CHARS."""
+        with mock.patch.object(self.bm, "WORD_LIST", list(self.bm._FALLBACK_WORDS)):
+            text = self.bm._words(core.REF_EMBED_CHARS)
+        self.assertGreaterEqual(len(text), core.REF_EMBED_CHARS)
+        self.assertGreater(len(set(text.split())), 50, "a degenerate prompt is not a benchmark")

@@ -711,3 +711,46 @@ class TestAudioDuration(unittest.TestCase):
         for ext in core.AUDIO_TYPES:
             with self.subTest(ext):
                 self.assertIn(ext, core.AUDIO_BYTES_PER_SECOND)
+
+
+class TestBenchmarkClipCost(unittest.TestCase):
+    """The SDK builds each benchmark payload INSIDE the timed window (backend.py starts
+    its timer before the request loop), so whatever the generator costs is charged to
+    the engine and comes straight off max_throughput.
+
+    Measured before this was fixed: 1.10s to generate four 30s clips through
+    struct.pack, against a real 2.18s benchmark window on a live instance -- about 41%
+    of the measurement, halving the reported throughput of the engine it was supposed
+    to be measuring. Under-reporting makes the worker shed load early rather than
+    accept work it cannot do, so it is the safe direction and still wrong.
+    """
+
+    def test_a_reference_clip_is_cheap_to_build(self):
+        import time
+        from workers.openai.benchmark import REF_AUDIO_SECONDS, synthetic_wav
+
+        started = time.time()
+        for _ in range(4):
+            synthetic_wav(REF_AUDIO_SECONDS)
+        elapsed = time.time() - started
+        self.assertLess(elapsed, 0.5,
+                        f"four clips took {elapsed:.2f}s; at this cost the benchmark "
+                        f"measures the worker, not the engine")
+
+    def test_every_clip_differs(self):
+        """Engines cache processed multimodal input by content hash. Identical audio
+        every request would measure that cache from the second request onward."""
+        import hashlib
+        from workers.openai.benchmark import synthetic_wav
+
+        digests = {hashlib.sha256(synthetic_wav(2.0)).hexdigest() for _ in range(4)}
+        self.assertEqual(len(digests), 4)
+
+    def test_a_tiled_clip_is_still_the_full_length(self):
+        """Tiling must not shorten the audio: the encoder's work is the duration."""
+        from workers.openai.benchmark import synthetic_wav
+        for seconds in (1.0, 7.5, 30.0):
+            with self.subTest(seconds):
+                self.assertAlmostEqual(
+                    core._audio_seconds(synthetic_wav(seconds), "a.wav"),
+                    seconds, places=2)

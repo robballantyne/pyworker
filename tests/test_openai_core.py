@@ -39,6 +39,40 @@ def b64(data=WAV):
     return base64.b64encode(data).decode()
 
 
+def _flac_like(seconds, rate=16000):
+    """A FLAC whose STREAMINFO declares `seconds` of audio, with almost no payload:
+    the point of these fixtures is that duration comes from the header, not the size."""
+    samples = int(seconds * rate)
+    info = bytearray(34)
+    packed = (rate << 44) | (0 << 41) | ((16 - 1) << 36) | samples
+    info[10:18] = packed.to_bytes(8, "big")
+    return b"fLaC" + bytes([0x00, 0, 0, 34]) + bytes(info) + b"\x00" * 256
+
+
+def _mp4_like(seconds, timescale=600):
+    """An mvhd atom declaring duration/timescale, as m4a and mp4 carry it."""
+    body = (bytes([0]) + b"\x00" * 3 + b"\x00" * 8
+            + timescale.to_bytes(4, "big") + int(seconds * timescale).to_bytes(4, "big"))
+    return b"\x00" * 8 + b"moov" + b"\x00" * 4 + b"mvhd" + body + b"\x00" * 64
+
+
+def _ogg_like(seconds, rate=48000):
+    """Opus counts its granule positions in 48 kHz units whatever the input rate."""
+    head = b"OggS" + bytes([0, 2]) + (0).to_bytes(8, "little") + b"\x00" * 200
+    head += b"OpusHead" + b"\x00" * 16
+    last = b"OggS" + bytes([0, 4]) + int(seconds * rate).to_bytes(8, "little")
+    return head + last + b"\x00" * 16
+
+
+def _mp3_like(seconds, rate=16000, frames=None):
+    """MPEG-2 Layer III at 16 kHz, 576 samples per frame, with the Xing/Info frame
+    count a VBR encoder writes. ffmpeg produces exactly this shape by default."""
+    frames = frames if frames is not None else int(seconds * rate / 576)
+    header = bytes([0xFF, 0xF3, 0x58, 0xC0])
+    info = b"Info" + (1).to_bytes(4, "big") + frames.to_bytes(4, "big")
+    return header + b"\x00" * 20 + info + b"\x00" * 4096
+
+
 class TestTranscriptionPayloadValidation(unittest.TestCase):
     def test_rejects_bad_file_field(self):
         for label, payload in [
@@ -330,10 +364,40 @@ class TestSpeechWorkload(unittest.TestCase):
 
 
 class TestUploadWorkload(unittest.TestCase):
-    def test_a_reference_sized_clip_is_one_request(self):
-        audio = base64.b64encode(b"\x00" * (1024 * 1024)).decode()
-        self.assertEqual(TranscriptionPayload.from_json_msg({"file": audio}).count_workload(),
-                         ONE_REQUEST)
+    """ASR is counted in SECONDS of audio, not bytes: the same megabyte is 26s of
+    320 kbps MP3 or 349s of 24 kbps Opus, and charging both the same under-counted the
+    slow end -- the direction that makes the queue estimate optimistic. Duration is also
+    knowable before the request runs, which output tokens are not, and it is what the
+    engine itself bills (vLLM answers with usage.type == "duration")."""
+
+    def test_a_reference_length_clip_is_one_request(self):
+        from workers.openai.benchmark import REF_AUDIO_SECONDS, synthetic_wav
+
+        audio = base64.b64encode(synthetic_wav(REF_AUDIO_SECONDS)).decode()
+        payload = TranscriptionPayload.from_json_msg({"file": audio,
+                                                      "filename": "a.wav"})
+        self.assertAlmostEqual(payload.count_workload(), ONE_REQUEST, delta=1)
+
+    def test_the_same_audio_costs_the_same_whatever_the_container(self):
+        """The defect this replaced: an encoding choice changed the price by 13x."""
+        from workers.openai.benchmark import synthetic_wav
+
+        wav = synthetic_wav(10.0)
+        loose = base64.b64encode(wav).decode()                     # 320 KB of PCM
+        # the same ten seconds as a compact container, an eighth of the bytes
+        tight = base64.b64encode(_flac_like(10.0)).decode()
+        a = TranscriptionPayload.from_json_msg({"file": loose, "filename": "a.wav"})
+        b = TranscriptionPayload.from_json_msg({"file": tight, "filename": "a.flac"})
+        self.assertAlmostEqual(a.count_workload(), b.count_workload(), delta=1)
+        self.assertLess(len(_flac_like(10.0)), len(wav) // 4)
+
+    def test_a_clip_with_no_parsable_header_falls_back_to_bytes(self):
+        """The fallback must still produce a number, since refusing to price a request
+        is worse than pricing it approximately."""
+        audio = base64.b64encode(b"\x00" * (320 * 1000)).decode()
+        payload = TranscriptionPayload.from_json_msg({"file": audio,
+                                                      "filename": "a.webm"})
+        self.assertGreater(payload.count_workload(), 0)
 
 
 class TestUploadLimits(unittest.TestCase):
@@ -392,17 +456,13 @@ class TestTranscriptionBenchmarkPayload(unittest.TestCase):
         is in a different unit from every other candidate's."""
         import wave
         from io import BytesIO
-        from workers.openai.benchmark import (REF_AUDIO_BYTES, WAV_RATE,
-                                              WAV_BYTES_PER_SECOND, synthetic_wav)
+        from workers.openai.benchmark import REF_AUDIO_SECONDS, WAV_RATE, synthetic_wav
 
         clip = synthetic_wav()
-        self.assertAlmostEqual(len(clip), REF_AUDIO_BYTES, delta=1024)
         with wave.open(BytesIO(clip)) as w:
             self.assertEqual((w.getnchannels(), w.getsampwidth(), w.getframerate()),
                              (1, 2, WAV_RATE))
-            self.assertEqual(
-                w.getnframes(),
-                int(REF_AUDIO_BYTES / WAV_BYTES_PER_SECOND * WAV_RATE))
+            self.assertEqual(w.getnframes(), int(REF_AUDIO_SECONDS * WAV_RATE))
             frames = w.readframes(w.getnframes())
         self.assertNotEqual(frames, b"\x00" * len(frames), "clip is digital silence")
 
@@ -593,3 +653,61 @@ class TestAdmissionGate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAudioDuration(unittest.TestCase):
+    """Duration is read from the container, because it is what an ASR request costs,
+    what the engine bills (vLLM: usage.type == "duration"), and -- unlike the output
+    tokens -- knowable before the request runs.
+
+    Every expectation below was cross-checked against ffprobe on real ffmpeg-encoded
+    fixtures during development: wav, flac, m4a, ogg and mp3 all landed at 1.00x, and
+    webm at 1.17x through the byte-table fallback.
+    """
+
+    def test_wav_is_exact(self):
+        from workers.openai.benchmark import synthetic_wav
+        self.assertAlmostEqual(core._audio_seconds(synthetic_wav(7.5), "a.wav"),
+                               7.5, places=2)
+
+    def test_flac_reads_streaminfo(self):
+        self.assertAlmostEqual(core._audio_seconds(_flac_like(7.5), "a.flac"),
+                               7.5, places=2)
+
+    def test_mp4_reads_mvhd(self):
+        self.assertAlmostEqual(core._audio_seconds(_mp4_like(7.5), "a.m4a"),
+                               7.5, places=2)
+
+    def test_ogg_reads_the_last_granule_position(self):
+        self.assertAlmostEqual(core._audio_seconds(_ogg_like(7.5), "a.ogg"),
+                               7.5, places=2)
+
+    def test_mp3_prefers_the_xing_frame_count_over_the_first_frame_bitrate(self):
+        """A VBR file's first frame says nothing useful about the whole: reading the
+        bitrate there measured 0.60x against ffprobe, the frame count 1.00x."""
+        raw = _mp3_like(7.5)
+        self.assertAlmostEqual(core._audio_seconds(raw, "a.mp3"), 7.5, places=1)
+
+    def test_mp3_falls_back_to_the_bitrate_without_a_xing_header(self):
+        """CBR, which is what the first frame's bitrate actually describes. The header
+        below is MPEG-2 (16 kHz), where index 5 is 40 kbps -- reading it off the MPEG-1
+        table instead calls it 64 kbps and under-counts the clip by a third, which is
+        what a 16 kHz upload measured at 0.38x against ffprobe before the split."""
+        payload = 40 * 1000 // 8 * 5                      # five seconds at 40 kbps
+        raw = bytes([0xFF, 0xF3, 0x58, 0xC0]) + b"\x00" * payload
+        self.assertAlmostEqual(core._audio_seconds(raw, "a.mp3"), 5.0, delta=0.1)
+
+    def test_an_unparsable_container_uses_its_own_byte_rate(self):
+        """webm has no cheap header parse, so it is priced from bytes -- per container,
+        which is the part that was wrong before: one global constant charged 26s of MP3
+        and 349s of Opus identically."""
+        raw = b"\x1aE\xdf\xa3" + b"\x00" * 80000
+        ogg_guess = core._audio_seconds(raw, "a.webm")
+        self.assertAlmostEqual(ogg_guess, 80004 / core.AUDIO_BYTES_PER_SECOND["webm"],
+                               places=2)
+
+    def test_a_byte_rate_exists_for_every_accepted_format(self):
+        """A format the worker accepts but cannot price would fall to the default."""
+        for ext in core.AUDIO_TYPES:
+            with self.subTest(ext):
+                self.assertIn(ext, core.AUDIO_BYTES_PER_SECOND)

@@ -30,10 +30,13 @@ WORD_LIST = nltk.corpus.words.words()
 
 WAV_RATE = 16000
 WAV_BYTES_PER_SECOND = WAV_RATE * 2     # 16-bit mono
-# One uploaded clip, the reference the transcription workload is counted against
-# (core.REF_AUDIO_BYTES). synthetic_wav() defaults to exactly this, so the benchmark
-# request weighs one reference request like every other candidate's.
-REF_AUDIO_BYTES = 1024 * 1024
+# One uploaded clip, the reference the transcription workload is counted against, in
+# SECONDS of audio rather than bytes: the same megabyte is 26 s of 320 kbps MP3 or 349 s
+# of 24 kbps Opus, so bytes charged a 13x spread identically -- and under-charged the
+# slow end, which is the direction that makes the queue estimate optimistic. 30 s is one
+# Whisper window, and synthetic_wav() defaults to exactly this, so the benchmark request
+# weighs one reference request like every other candidate's.
+REF_AUDIO_SECONDS = 30.0
 
 
 def resolve_model_name() -> Optional[str]:
@@ -63,7 +66,7 @@ def _voice() -> dict:
     return {"voice": voice} if voice else {}
 
 
-def synthetic_wav(seconds: float = REF_AUDIO_BYTES / WAV_BYTES_PER_SECOND,
+def synthetic_wav(seconds: float = REF_AUDIO_SECONDS,
                   rate: int = WAV_RATE) -> bytes:
     """Quiet noise as 16-bit mono WAV, one reference clip long by default.
 

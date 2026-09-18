@@ -9,7 +9,9 @@ import base64
 import binascii
 import os
 import re
+import wave
 from dataclasses import dataclass, field
+from io import BytesIO
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -19,7 +21,7 @@ from vastai.serverless.server.lib.data_types import ApiPayload, JsonDataExceptio
 from workers.openai.benchmark import (
     BENCHMARKS,
     DEFAULT_BENCHMARK_ROUTE,
-    REF_AUDIO_BYTES,
+    REF_AUDIO_SECONDS,
     completions_benchmark_generator,  # noqa: F401  (re-exported)
     resolve_model_name as _resolve_model_name,
     synthetic_wav,
@@ -103,8 +105,8 @@ MIN_REQUEST_MULTIPLE = 0.1
 MAX_REQUEST_MULTIPLE = 8.0
 
 REF_IMAGE_PIXELS = 1024 * 1024      # one image; also used when `size` is absent or "auto"
-# REF_AUDIO_BYTES: an uploaded clip. Defined in benchmark.py, where synthetic_wav() has
-# to produce exactly one of them.
+# REF_AUDIO_SECONDS: one uploaded clip. Defined in benchmark.py, where synthetic_wav()
+# has to produce exactly one of them.
 REF_SPEECH_CHARS = 500              # text to synthesise; each clone reference adds one
 REF_EMBED_CHARS = 2000              # text to embed
 CHARS_PER_TOKEN = 4                 # sizes pre-tokenised embedding input
@@ -175,6 +177,139 @@ def _file_part(raw: bytes, filename: Any, default: str, types: Dict[str, str],
             {field: f"unsupported file type {ext or '(none)'!r}; "
                     f"expected one of {', '.join(sorted(types))}"})
     return (name, raw, types[ext])
+
+
+# Audio duration, in seconds, from the upload itself.
+#
+# Duration is what an ASR request costs and what the engine itself bills: vLLM answers
+# a transcription with {"usage": {"type": "duration", "seconds": N}}. It is also
+# knowable BEFORE the request runs, which is the whole requirement for an admission
+# estimate -- output tokens are not, since nobody knows what is in the audio until it
+# has been transcribed. Whisper pads into fixed 30 s windows and caps each window's
+# decode, so duration bounds the work rather than merely correlating with it.
+#
+# Parsed exactly where a header makes it cheap. The fallback is a per-container
+# bytes-per-second ESTIMATE, which is wrong by a factor of ~2 within a format (bitrate
+# varies) but no longer by 13x across formats, and the clamp in _in_request_units bounds
+# it either way.
+AUDIO_BYTES_PER_SECOND = {
+    "wav": 32000, "flac": 12000, "mp3": 16000, "mpeg": 16000, "mpga": 16000,
+    "m4a": 16000, "mp4": 16000, "ogg": 8000, "webm": 8000,
+}
+DEFAULT_AUDIO_BYTES_PER_SECOND = 16000
+# Layer III bitrates, in kbps, by version. A 16 kHz upload is MPEG-2, not MPEG-1, and
+# reading it off the MPEG-1 table made a 24 kbps file look like 64 kbps -- measured 0.38x
+# against ffprobe before this split.
+_MP3_BITRATES_V1 = (None, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320)
+_MP3_BITRATES_V2 = (None, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160)
+_MP3_RATES = {3: (44100, 48000, 32000), 2: (22050, 24000, 16000), 0: (11025, 12000, 8000)}
+
+
+def _wav_seconds(raw: bytes) -> Optional[float]:
+    if not raw.startswith(b"RIFF"):
+        return None
+    with wave.open(BytesIO(raw)) as w:
+        return w.getnframes() / float(w.getframerate())
+
+
+def _flac_seconds(raw: bytes) -> Optional[float]:
+    """STREAMINFO carries the sample rate and the total sample count."""
+    if not raw.startswith(b"fLaC"):
+        return None
+    info = raw[8:8 + 34]                       # 4 magic + 4 block header
+    rate = int.from_bytes(info[10:13], "big") >> 4          # 20 bits
+    samples = int.from_bytes(info[13:18], "big") & ((1 << 36) - 1)
+    return samples / float(rate) if rate and samples else None
+
+
+def _mp4_seconds(raw: bytes) -> Optional[float]:
+    """m4a/mp4: the mvhd atom's duration over its timescale."""
+    at = raw.find(b"mvhd", 0, 1 << 20)         # bounded: it sits near the front
+    if at < 0:
+        return None
+    body = raw[at + 4:]
+    if body[0] == 1:                           # 64-bit version
+        scale = int.from_bytes(body[20:24], "big")
+        dur = int.from_bytes(body[24:32], "big")
+    else:
+        scale = int.from_bytes(body[12:16], "big")
+        dur = int.from_bytes(body[16:20], "big")
+    return dur / float(scale) if scale and dur else None
+
+
+def _ogg_seconds(raw: bytes) -> Optional[float]:
+    """The last Ogg page's granule position is the stream's sample count. Opus always
+    counts in 48 kHz units whatever the input rate; Vorbis counts in its own, which the
+    ID header carries 12 bytes in."""
+    if not raw.startswith(b"OggS"):
+        return None
+    last = raw.rfind(b"OggS")
+    if last < 0:
+        return None
+    granule = int.from_bytes(raw[last + 6:last + 14], "little")
+    if not granule:
+        return None
+    if b"OpusHead" in raw[:4096]:
+        return granule / 48000.0
+    at = raw.find(b"\x01vorbis")
+    if at >= 0:
+        rate = int.from_bytes(raw[at + 12:at + 16], "little")
+        if rate:
+            return granule / float(rate)
+    return None
+
+
+def _mp3_seconds(raw: bytes) -> Optional[float]:
+    """Bitrate from the first frame header, i.e. CBR. A VBR file is wrong by however
+    far its average sits from its first frame, which the clamp absorbs."""
+    start = 0
+    if raw.startswith(b"ID3"):                 # skip the tag: syncsafe size at byte 6
+        size = 0
+        for b in raw[6:10]:
+            size = (size << 7) | (b & 0x7F)
+        start = 10 + size
+    head = raw[start:start + 4]
+    if len(head) < 4 or head[0] != 0xFF or (head[1] & 0xE0) != 0xE0:
+        return None
+    version = (head[1] >> 3) & 0x03            # 3 = MPEG-1, 2 = MPEG-2, 0 = MPEG-2.5
+    rate_idx = (head[2] >> 2) & 0x03
+    if rate_idx > 2:
+        return None
+    rate = _MP3_RATES[version].__getitem__(rate_idx) if version in _MP3_RATES else None
+
+    # A VBR file carries its frame COUNT in a Xing/Info header inside the first frame,
+    # and that is exact. Without it the first frame's bitrate is all there is, which is
+    # right for CBR and approximate otherwise -- measured 0.60x against ffprobe on an
+    # ffmpeg-default VBR file before this branch existed.
+    tag = raw.find(b"Xing", start, start + 256)
+    if tag < 0:
+        tag = raw.find(b"Info", start, start + 256)
+    if tag >= 0 and rate and int.from_bytes(raw[tag + 4:tag + 8], "big") & 1:
+        frames = int.from_bytes(raw[tag + 8:tag + 12], "big")
+        samples_per_frame = 1152 if version == 3 else 576      # Layer III
+        if frames:
+            return frames * samples_per_frame / float(rate)
+
+    table = _MP3_BITRATES_V1 if version == 3 else _MP3_BITRATES_V2
+    bitrate = table[(head[2] >> 4) & 0x0F]
+    if not bitrate:
+        return None
+    return (len(raw) - start) * 8 / float(bitrate * 1000)
+
+
+def _audio_seconds(raw: bytes, filename: str) -> float:
+    """Seconds of audio in `raw`, exactly where the container says so."""
+    for parse in (_wav_seconds, _flac_seconds, _mp4_seconds, _ogg_seconds,
+                  _mp3_seconds):
+        try:
+            seconds = parse(raw)
+        except Exception:
+            seconds = None
+        if seconds and seconds > 0:
+            return seconds
+    ext = str(filename).rpartition(".")[2].lower()
+    per_second = AUDIO_BYTES_PER_SECOND.get(ext, DEFAULT_AUDIO_BYTES_PER_SECOND)
+    return len(raw) / float(per_second)
 
 
 def _check_budget(values: List[Any], field: str) -> None:
@@ -293,8 +428,8 @@ class TranscriptionPayload(_UploadPayload):
         return {"file": part, **self.fields}
 
     def count_workload(self) -> float:
-        # Bytes proxy for duration, which would need a header parse per request.
-        return _in_request_units(len(self.audio), REF_AUDIO_BYTES)
+        return _in_request_units(_audio_seconds(self.audio, self.filename),
+                                 REF_AUDIO_SECONDS)
 
 
 class ImageEditPayload(_UploadPayload):

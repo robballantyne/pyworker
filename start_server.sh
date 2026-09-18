@@ -63,14 +63,17 @@ function install_vastai_sdk() {
         echo "Force reinstalling vastai"
     fi
 
-    # If SDK_BRANCH is set, install vastai from the vast-cli repo at that branch/tag/commit.
+    # If SDK_BRANCH is set, install vastai from source at that branch/tag/commit. SDK_REPO
+    # points the install at a fork; it defaults to vast-ai/vast-cli.
     if [ -n "${SDK_BRANCH:-}" ]; then
         if [ -n "${SDK_VERSION:-}" ]; then
             echo "WARNING: Both SDK_BRANCH and SDK_VERSION are set; using SDK_BRANCH=${SDK_BRANCH}"
         fi
-        echo "Installing vastai from https://github.com/vast-ai/vast-cli/ @ ${SDK_BRANCH}"
-        if ! uv pip install "${uv_flags[@]}" "vastai @ git+https://github.com/vast-ai/vast-cli.git@${SDK_BRANCH}"; then
-            report_error_and_exit "Failed to install vastai from vast-ai/vast-cli@${SDK_BRANCH}"
+        local sdk_repo="${SDK_REPO:-https://github.com/vast-ai/vast-cli}"
+        sdk_repo="${sdk_repo%.git}"
+        echo "Installing vastai from ${sdk_repo} @ ${SDK_BRANCH}"
+        if ! uv pip install "${uv_flags[@]}" "vastai @ git+${sdk_repo}.git@${SDK_BRANCH}"; then
+            report_error_and_exit "Failed to install vastai from ${sdk_repo}@${SDK_BRANCH}"
         fi
         return 0
     fi

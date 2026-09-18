@@ -4,6 +4,73 @@ This is the base PyWorker for OpenAI compatible inference servers.  See the [Ser
 
 All worker logic lives in `core.py`. The per-engine backends `vllm`, `sglang` and `llama` are thin adapters over this core, differing only in their baked default log grammar (every value is env-overridable by the image). `BACKEND=openai` is a backwards-compatible **alias for `vllm`** — `openai/worker.py` runs the vLLM worker directly, so there is one definition of the vLLM defaults and no second copy to drift; templates declaring `openai` must run a pyworker new enough to contain this split. The demo test client in `client.py` is shared — run it as `python -m workers.openai.client` regardless of which engine backend you deployed.
 
+## Routes
+
+| Route | Request | Response |
+|---|---|---|
+| `/v1/completions`, `/v1/chat/completions` | JSON | JSON or SSE |
+| `/v1/embeddings` | JSON | JSON |
+| `/v1/audio/speech` | JSON (voice-clone `ref_audio`: http(s) URL or base64) | audio bytes |
+| `/v1/audio/transcriptions`, `/v1/audio/translations` | JSON with the file base64'd in `file` | JSON or text |
+| `/v1/images/generations` | JSON | JSON |
+| `/v1/images/edits`, `/v1/images/variations` | JSON with `image` (base64, or a list), or `url` | JSON |
+
+The worker envelope is JSON, so uploads arrive base64-encoded (`file`, `image`, `mask`) and
+are sent to the engine as multipart form data. `filename` / `mask_filename` set the file
+type. Requires a `vastai` SDK with multipart support; on an older SDK the four upload
+routes are not served.
+
+**All routes are served by default.** The worker does not know what the loaded model
+supports, so it registers every route and lets the engine answer. A route the model does
+not serve returns the engine's 404 from behind the worker — with one caveat worth knowing:
+the request is still counted as work against this worker's queue estimate before it is
+forwarded, so a client hammering a route the model does not serve can make the worker shed
+load it could otherwise accept. `OPENAI_ROUTES` narrows the set if that matters for a
+deployment.
+
+What each engine actually serves depends on the engine and the loaded model:
+
+| Engine | Typically serves |
+|---|---|
+| vLLM, SGLang, llama.cpp | completions, chat; embeddings with an embedding model |
+| vLLM with Whisper or Voxtral | transcriptions, translations (and no completions at all) |
+| vLLM-Omni (`--omni`) | image generations, speech, alongside text |
+
+## Benchmarking
+
+`BENCHMARK_ROUTE` names the route to benchmark, and defaults to `/v1/completions`, so an
+LLM deployment benchmarks exactly what it did before. A deployment serving something else
+sets it: `/v1/audio/transcriptions` for Whisper, `/v1/embeddings` for an embedding model.
+
+The route is a property of the deployment, not of the engine. An omni model may serve chat
+and speech, and only the template knows which the endpoint exists for -- benchmarking the
+wrong one prices every request against the other one's throughput.
+
+Every route's benchmark request weighs the same, one reference-sized request, so the score
+means the same thing whichever route is benchmarked. Exactly one route carries a
+benchmark, which is what the SDK expects, so this needs no SDK support.
+
+If the model does not serve the benchmarked route, the benchmark fails and the worker does
+not become ready. The startup log names the route and the variable to change:
+
+```
+benchmarking: /v1/completions. If this model does not serve it, set BENCHMARK_ROUTE to
+the route it does.
+```
+
+So a Whisper deployment that forgets `BENCHMARK_ROUTE=/v1/audio/transcriptions` shows up
+as an endpoint that never becomes ready, not as one that serves wrong answers.
+
+## Settings
+
+| Variable | Default | Effect |
+|---|---|---|
+| `BENCHMARK_ROUTE` | `/v1/completions` | The route to benchmark. It must be served, and one of: completions, chat, embeddings, speech, image generations, transcriptions. |
+| `OPENAI_ROUTES` | all | Comma-separated routes to serve. Must include `BENCHMARK_ROUTE`. |
+| `BENCHMARK_SPEECH_VOICE` | none | `voice` to send when benchmarking speech. |
+| `WORKER_MAX_UPLOAD_BYTES` | 26214400 | Largest single uploaded file (decoded). |
+| `WORKER_MAX_REQUEST_UPLOAD_BYTES` | 67108864 | Largest total of all uploads and inline references in one request. |
+
 ## Instance Setup
 
 1. Pick a template

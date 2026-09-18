@@ -24,7 +24,7 @@ from workers.openai.benchmark import (
     REF_AUDIO_SECONDS,
     completions_benchmark_generator,  # noqa: F401  (re-exported)
     resolve_model_name as _resolve_model_name,
-    synthetic_wav,
+    benchmark_audio,
 )
 
 
@@ -408,7 +408,7 @@ class TranscriptionPayload(_UploadPayload):
     def for_test(cls) -> "TranscriptionPayload":
         fields: Dict[str, Any] = {}
         _fill_model(fields)
-        return cls(fields=fields, audio=synthetic_wav(), filename="benchmark.wav")
+        return cls(fields=fields, audio=benchmark_audio(), filename="benchmark.wav")
 
     @classmethod
     def from_json_msg(cls, json_msg: Any) -> "TranscriptionPayload":

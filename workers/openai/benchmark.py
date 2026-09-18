@@ -14,6 +14,7 @@ import math
 import os
 import random
 import sys
+import urllib.request
 import wave
 from dataclasses import dataclass
 from io import BytesIO
@@ -104,6 +105,86 @@ def synthetic_wav(seconds: float = REF_AUDIO_SECONDS,
         w.setframerate(rate)
         w.writeframes(samples.tobytes())
     return buf.getvalue()
+
+
+# Real speech for the transcription benchmark.
+#
+# MEASURED on a live whisper-large-v3 instance: quiet noise transcribes to 11 characters
+# where 30s of speech gives 289, so the decoder is idle and the benchmark reports ~2x the
+# throughput the engine actually has on real audio (158 vs 74 audio-seconds/second at
+# concurrency 1; the same ratio at 2, 4 and 8). An ASR score measured on noise is an
+# encoder score.
+#
+# DELIVERY IS AN OPEN DECISION. Downloading at boot matches how the word corpus already
+# arrives, which is the cheapest thing that works today -- and the corpus is also the
+# warning: a boot fetch that is REQUIRED takes the whole worker down when it fails. So
+# this one is optional by construction, and falls back to synthetic noise with a warning.
+# Before this is something customers depend on, pick one deliberately: vendor the clip in
+# the repo (weight + licence review), bake it into the engine images (no network, but the
+# worker then needs the image to carry it), or serve it from infrastructure we control
+# (no third-party availability risk). See the notes for the trade-offs.
+BENCHMARK_AUDIO_URL = os.environ.get(
+    "BENCHMARK_AUDIO_URL",
+    "https://github.com/ggerganov/whisper.cpp/raw/master/samples/jfk.wav")
+_MAX_BENCHMARK_AUDIO_BYTES = 8 * 1024 * 1024
+_BENCHMARK_AUDIO_TIMEOUT = float(os.environ.get("BENCHMARK_AUDIO_TIMEOUT", 20))
+_speech_clip: Optional[bytes] = None       # None = not tried, b"" = unavailable
+
+
+def _fetch_speech(url: str) -> Optional[bytes]:
+    try:
+        with urllib.request.urlopen(url, timeout=_BENCHMARK_AUDIO_TIMEOUT) as resp:
+            return resp.read(_MAX_BENCHMARK_AUDIO_BYTES)
+    except Exception as exc:
+        print(f"benchmark speech sample could not be fetched: {type(exc).__name__}",
+              flush=True)
+        return None
+
+
+def _tile_wav(raw: bytes, seconds: float) -> Optional[bytes]:
+    """Repeat a clip up to `seconds` exactly, keeping its own format."""
+    try:
+        with wave.open(BytesIO(raw)) as r:
+            channels, width, rate = r.getnchannels(), r.getsampwidth(), r.getframerate()
+            frames = r.readframes(r.getnframes())
+        if not frames:
+            return None
+        want = int(seconds * rate) * width * channels
+        data = (frames * (want // len(frames) + 1))[:want]
+        buf = BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(channels)
+            w.setsampwidth(width)
+            w.setframerate(rate)
+            w.writeframes(data)
+        return buf.getvalue()
+    except Exception:
+        return None
+
+
+def benchmark_audio(seconds: float = REF_AUDIO_SECONDS) -> bytes:
+    """One reference clip of REAL speech, falling back to synthetic noise.
+
+    Fetched once per process, on first use -- which is the warmup request, before the
+    timed runs -- and never at import, so a worker whose network is blocked still starts.
+    """
+    global _speech_clip
+    if _speech_clip is None:
+        raw = _fetch_speech(BENCHMARK_AUDIO_URL)
+        _speech_clip = (_tile_wav(raw, seconds) or b"") if raw else b""
+        if not _speech_clip:
+            # Warned here rather than at the fetch, so an unreadable download -- a 404
+            # page is bytes too, and wave will not open it -- is as loud as no download.
+            print("WARNING: benchmarking transcription on synthetic noise, which leaves "
+                  "the decoder idle and overstates real-speech throughput by roughly 2x "
+                  "(measured on whisper-large-v3)", flush=True)
+    if not _speech_clip:
+        return synthetic_wav(seconds)
+    # Engines cache processed multimodal input by content hash, so the bytes must differ
+    # per request or the benchmark measures the cache. Re-rolling the tail is enough and
+    # leaves >99% of the audio -- and all of its speech content -- identical.
+    tail = 4096
+    return _speech_clip[:-tail] + random.randbytes(min(tail, len(_speech_clip) // 2))
 
 
 # Benchmark payloads. Each is one reference-sized request (see core.py's workload units).

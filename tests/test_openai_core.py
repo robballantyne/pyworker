@@ -754,3 +754,73 @@ class TestBenchmarkClipCost(unittest.TestCase):
                 self.assertAlmostEqual(
                     core._audio_seconds(synthetic_wav(seconds), "a.wav"),
                     seconds, places=2)
+
+
+class TestBenchmarkSpeechClip(unittest.TestCase):
+    """The transcription benchmark uses REAL speech, because noise leaves the decoder
+    idle: measured on whisper-large-v3, 30s of noise transcribes to 11 characters and
+    30s of speech to 289, and the reported throughput differs by ~2x at every
+    concurrency level tested (158 vs 74 audio-seconds/second at 1).
+
+    The clip is downloaded, which is the same delivery the word corpus already uses AND
+    the same hazard -- a required boot fetch is what takes a worker down when it fails.
+    So it is optional by construction: no network, no speech, a warning, and a benchmark
+    that still runs on synthetic noise. Delivery in production is an open decision.
+    """
+
+    def setUp(self):
+        from workers.openai import benchmark
+        self.bm = benchmark
+        self._saved = benchmark._speech_clip
+        benchmark._speech_clip = None
+
+    def tearDown(self):
+        self.bm._speech_clip = self._saved
+
+    def test_a_failed_download_still_produces_a_reference_clip(self):
+        with mock.patch.object(self.bm, "_fetch_speech", return_value=None), \
+                mock.patch("builtins.print"):
+            clip = self.bm.benchmark_audio()
+        self.assertAlmostEqual(core._audio_seconds(clip, "a.wav"),
+                               self.bm.REF_AUDIO_SECONDS, places=2)
+
+    def test_a_failed_download_is_not_silent(self):
+        with mock.patch.object(self.bm, "_fetch_speech", return_value=None), \
+                mock.patch("builtins.print") as printed:
+            self.bm.benchmark_audio()
+        said = " ".join(str(c.args[0]) for c in printed.call_args_list)
+        self.assertIn("synthetic noise", said)
+
+    def test_a_downloaded_clip_is_tiled_to_the_reference_length(self):
+        """The sample is 11s; the workload unit is 30s, and a benchmark request has to
+        weigh exactly one reference request like every other route's."""
+        short = self.bm.synthetic_wav(11.0)
+        with mock.patch.object(self.bm, "_fetch_speech", return_value=short):
+            clip = self.bm.benchmark_audio()
+        self.assertAlmostEqual(core._audio_seconds(clip, "a.wav"),
+                               self.bm.REF_AUDIO_SECONDS, places=2)
+
+    def test_each_request_gets_distinct_bytes(self):
+        short = self.bm.synthetic_wav(11.0)
+        with mock.patch.object(self.bm, "_fetch_speech", return_value=short):
+            import hashlib
+            digests = {hashlib.sha256(self.bm.benchmark_audio()).hexdigest()
+                       for _ in range(4)}
+        self.assertEqual(len(digests), 4, "an identical clip measures the engine's cache")
+
+    def test_the_sample_is_fetched_once_not_per_request(self):
+        """for_test() runs inside the SDK's timed window; a fetch per request would be
+        measured as engine time."""
+        short = self.bm.synthetic_wav(11.0)
+        with mock.patch.object(self.bm, "_fetch_speech", return_value=short) as fetch:
+            for _ in range(5):
+                self.bm.benchmark_audio()
+        self.assertEqual(fetch.call_count, 1)
+
+    def test_an_unreadable_download_falls_back(self):
+        """A 404 page or an HTML redirect is bytes too, and wave will not open it."""
+        with mock.patch.object(self.bm, "_fetch_speech", return_value=b"<html>404</html>"), \
+                mock.patch("builtins.print"):
+            clip = self.bm.benchmark_audio()
+        self.assertAlmostEqual(core._audio_seconds(clip, "a.wav"),
+                               self.bm.REF_AUDIO_SECONDS, places=2)

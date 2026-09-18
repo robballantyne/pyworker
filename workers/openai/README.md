@@ -68,6 +68,8 @@ as an endpoint that never becomes ready, not as one that serves wrong answers.
 | `BENCHMARK_ROUTE` | `/v1/completions` | The route to benchmark. It must be served, and one of: completions, chat, embeddings, speech, image generations, transcriptions. |
 | `OPENAI_ROUTES` | all | Comma-separated routes to serve. Must include `BENCHMARK_ROUTE`. |
 | `BENCHMARK_SPEECH_VOICE` | none | `voice` to send when benchmarking speech. |
+| `BENCHMARK_AUDIO_URL` | a public speech sample | Clip the transcription benchmark transcribes. Fetched once at first use; on failure the benchmark falls back to synthetic noise, which leaves the decoder idle and overstates real-speech throughput by roughly 2x. |
+| `BENCHMARK_AUDIO_TIMEOUT` | 20 | Seconds allowed for that fetch. |
 | `WORKER_MAX_UPLOAD_BYTES` | 26214400 | Largest single uploaded file (decoded). |
 | `WORKER_MAX_REQUEST_UPLOAD_BYTES` | 67108864 | Largest total of all uploads and inline references in one request. |
 

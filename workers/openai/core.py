@@ -297,8 +297,13 @@ def _mp3_seconds(raw: bytes) -> Optional[float]:
     return (len(raw) - start) * 8 / float(bitrate * 1000)
 
 
-def _audio_seconds(raw: bytes, filename: str) -> float:
-    """Seconds of audio in `raw`, exactly where the container says so."""
+def parsed_audio_seconds(raw: bytes) -> Optional[float]:
+    """Duration from the container itself, or None if no header here recognises it.
+
+    Separate from _audio_seconds because "I could not read this" and "I read 12s" are
+    different answers, and the benchmark needs the first one: an extension proves
+    nothing about the bytes, and a 404 page served from a .wav URL is still a 404 page.
+    """
     for parse in (_wav_seconds, _flac_seconds, _mp4_seconds, _ogg_seconds,
                   _mp3_seconds):
         try:
@@ -307,6 +312,14 @@ def _audio_seconds(raw: bytes, filename: str) -> float:
             seconds = None
         if seconds and seconds > 0:
             return seconds
+    return None
+
+
+def _audio_seconds(raw: bytes, filename: str) -> float:
+    """Seconds of audio in `raw`, exactly where the container says so."""
+    seconds = parsed_audio_seconds(raw)
+    if seconds:
+        return seconds
     ext = str(filename).rpartition(".")[2].lower()
     per_second = AUDIO_BYTES_PER_SECOND.get(ext, DEFAULT_AUDIO_BYTES_PER_SECOND)
     return len(raw) / float(per_second)
@@ -408,7 +421,11 @@ class TranscriptionPayload(_UploadPayload):
     def for_test(cls) -> "TranscriptionPayload":
         fields: Dict[str, Any] = {}
         _fill_model(fields)
-        return cls(fields=fields, audio=benchmark_audio(), filename="benchmark.wav")
+        # AUDIO_TYPES is this route's own format table, so a supplied clip can only be
+        # offered to the engine in a container the worker would accept from a caller.
+        audio, filename = benchmark_audio(accepted=AUDIO_TYPES,
+                                          probe=parsed_audio_seconds)
+        return cls(fields=fields, audio=audio, filename=filename)
 
     @classmethod
     def from_json_msg(cls, json_msg: Any) -> "TranscriptionPayload":

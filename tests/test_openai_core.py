@@ -780,7 +780,7 @@ class TestBenchmarkSpeechClip(unittest.TestCase):
     def test_a_failed_download_still_produces_a_reference_clip(self):
         with mock.patch.object(self.bm, "_fetch_speech", return_value=None), \
                 mock.patch("builtins.print"):
-            clip = self.bm.benchmark_audio()
+            clip, _name = self.bm.benchmark_audio()
         self.assertAlmostEqual(core._audio_seconds(clip, "a.wav"),
                                self.bm.REF_AUDIO_SECONDS, places=2)
 
@@ -796,7 +796,7 @@ class TestBenchmarkSpeechClip(unittest.TestCase):
         weigh exactly one reference request like every other route's."""
         short = self.bm.synthetic_wav(11.0)
         with mock.patch.object(self.bm, "_fetch_speech", return_value=short):
-            clip = self.bm.benchmark_audio()
+            clip, _name = self.bm.benchmark_audio()
         self.assertAlmostEqual(core._audio_seconds(clip, "a.wav"),
                                self.bm.REF_AUDIO_SECONDS, places=2)
 
@@ -804,7 +804,7 @@ class TestBenchmarkSpeechClip(unittest.TestCase):
         short = self.bm.synthetic_wav(11.0)
         with mock.patch.object(self.bm, "_fetch_speech", return_value=short):
             import hashlib
-            digests = {hashlib.sha256(self.bm.benchmark_audio()).hexdigest()
+            digests = {hashlib.sha256(self.bm.benchmark_audio()[0]).hexdigest()
                        for _ in range(4)}
         self.assertEqual(len(digests), 4, "an identical clip measures the engine's cache")
 
@@ -821,6 +821,99 @@ class TestBenchmarkSpeechClip(unittest.TestCase):
         """A 404 page or an HTML redirect is bytes too, and wave will not open it."""
         with mock.patch.object(self.bm, "_fetch_speech", return_value=b"<html>404</html>"), \
                 mock.patch("builtins.print"):
-            clip = self.bm.benchmark_audio()
+            clip, _name = self.bm.benchmark_audio()
         self.assertAlmostEqual(core._audio_seconds(clip, "a.wav"),
                                self.bm.REF_AUDIO_SECONDS, places=2)
+
+
+class TestOperatorSuppliedClip(unittest.TestCase):
+    """BENCHMARK_AUDIO_URL exists so a deployment can benchmark on audio that matches
+    its own traffic -- its language, noise floor and speech density, which is what
+    drives decode work. That only helps if the formats operators actually have are
+    accepted: before this, an mp3 fetched fine and then silently reverted to noise."""
+
+    def setUp(self):
+        from workers.openai import benchmark
+        self.bm = benchmark
+        self._saved = benchmark._speech_clip
+        benchmark._speech_clip = None
+
+    def tearDown(self):
+        self.bm._speech_clip = self._saved
+
+    def _fetch(self, url, raw):
+        with mock.patch.object(self.bm, "BENCHMARK_AUDIO_URL", url), \
+                mock.patch.object(self.bm, "_fetch_speech", return_value=raw), \
+                mock.patch("builtins.print"):
+            return core.TranscriptionPayload.for_test()
+
+    def test_a_compressed_clip_is_used_as_supplied(self):
+        """It cannot be resized without a decoder, so it is sent whole and priced by
+        its real duration -- still workload over time, still a valid throughput."""
+        payload = self._fetch("https://host/calls.mp3", _mp3_like(7.5))
+        name, _data, ctype = payload.generate_payload_multipart()["file"]
+        self.assertEqual((name, ctype), ("calls.mp3", "audio/mpeg"))
+        self.assertAlmostEqual(payload.count_workload(),
+                               7.5 / self.bm.REF_AUDIO_SECONDS * 500, delta=25)
+
+    def test_a_signed_url_does_not_leak_its_query_into_the_filename(self):
+        """The engine picks its decoder from the extension; `a.mp3?sig=...` is not one."""
+        payload = self._fetch("https://host/a.mp3?sig=deadbeef&x=1", _mp3_like(5.0))
+        self.assertEqual(payload.filename, "a.mp3")
+
+    def test_wav_is_still_normalised_to_the_reference(self):
+        payload = self._fetch("https://host/clip.wav", self.bm.synthetic_wav(11.0))
+        self.assertEqual(payload.filename, "benchmark.wav")
+        self.assertAlmostEqual(payload.count_workload(), 500.0, delta=1)
+
+    def test_a_container_the_route_would_refuse_falls_back(self):
+        """A clip the worker would reject from a caller must not be sent by the
+        benchmark either, or the benchmark tests something no request can do."""
+        with mock.patch.object(self.bm, "BENCHMARK_AUDIO_URL", "https://host/a.aiff"), \
+                mock.patch.object(self.bm, "_fetch_speech", return_value=b"FORM....AIFF"), \
+                mock.patch("builtins.print") as printed:
+            payload = core.TranscriptionPayload.for_test()
+        said = " ".join(str(c.args[0]) for c in printed.call_args_list)
+        self.assertIn("does not accept", said)
+        self.assertAlmostEqual(payload.count_workload(), 500.0, delta=1)   # noise
+
+    def test_a_compressed_clip_is_not_varied_and_says_so(self):
+        """Only WAV can be rebuilt, so a compressed clip goes out byte-identical every
+        request. That is a real caveat -- an engine caching by content hash would serve
+        it from cache -- so it is stated rather than hidden."""
+        with mock.patch.object(self.bm, "BENCHMARK_AUDIO_URL", "https://host/a.mp3"), \
+                mock.patch.object(self.bm, "_fetch_speech", return_value=_mp3_like(5.0)), \
+                mock.patch("builtins.print") as printed:
+            first, _ = self.bm.benchmark_audio(accepted=core.AUDIO_TYPES,
+                                               probe=core.parsed_audio_seconds)
+            second, _ = self.bm.benchmark_audio(accepted=core.AUDIO_TYPES,
+                                                probe=core.parsed_audio_seconds)
+        self.assertEqual(first, second)
+        said = " ".join(str(c.args[0]) for c in printed.call_args_list)
+        self.assertIn("cache", said)
+
+    def test_an_extension_does_not_vouch_for_the_bytes(self):
+        """A 404 page served from a .wav URL has an accepted extension and is not
+        audio. Before the bytes were probed, it was forwarded to the engine as one."""
+        with mock.patch.object(self.bm, "BENCHMARK_AUDIO_URL", "https://host/clip.mp3"), \
+                mock.patch.object(self.bm, "_fetch_speech",
+                                  return_value=b"<!DOCTYPE html><title>404</title>"), \
+                mock.patch("builtins.print") as printed:
+            payload = core.TranscriptionPayload.for_test()
+        self.assertEqual(payload.filename, "benchmark.wav")          # fell back to noise
+        said = " ".join(str(c.args[0]) for c in printed.call_args_list)
+        self.assertIn("not audio this can read", said)
+
+    def test_real_audio_in_an_unaccepted_container_is_still_refused(self):
+        """Valid mp3 bytes served from a .opus URL: the engine picks its decoder from
+        the extension we send, and _file_part would refuse that one from a caller, so
+        the benchmark must not send it either. Both halves have to hold -- readable
+        bytes AND an extension this route accepts."""
+        self.assertNotIn("opus", core.AUDIO_TYPES)
+        with mock.patch.object(self.bm, "BENCHMARK_AUDIO_URL", "https://host/a.opus"), \
+                mock.patch.object(self.bm, "_fetch_speech", return_value=_mp3_like(5.0)), \
+                mock.patch("builtins.print") as printed:
+            payload = core.TranscriptionPayload.for_test()
+        self.assertEqual(payload.filename, "benchmark.wav")          # fell back to noise
+        said = " ".join(str(c.args[0]) for c in printed.call_args_list)
+        self.assertIn("does not accept", said)

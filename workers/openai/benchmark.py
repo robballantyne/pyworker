@@ -13,12 +13,14 @@ import array
 import math
 import os
 import random
+import re
 import sys
+import urllib.parse
 import urllib.request
 import wave
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional, Tuple
 
 import aiohttp
 import nltk
@@ -128,7 +130,7 @@ BENCHMARK_AUDIO_URL = os.environ.get(
     "https://github.com/ggerganov/whisper.cpp/raw/master/samples/jfk.wav")
 _MAX_BENCHMARK_AUDIO_BYTES = 8 * 1024 * 1024
 _BENCHMARK_AUDIO_TIMEOUT = float(os.environ.get("BENCHMARK_AUDIO_TIMEOUT", 20))
-_speech_clip: Optional[bytes] = None       # None = not tried, b"" = unavailable
+_speech_clip: Optional[Tuple] = None       # None = not tried, () = unavailable
 
 
 def _fetch_speech(url: str) -> Optional[bytes]:
@@ -162,29 +164,78 @@ def _tile_wav(raw: bytes, seconds: float) -> Optional[bytes]:
         return None
 
 
-def benchmark_audio(seconds: float = REF_AUDIO_SECONDS) -> bytes:
-    """One reference clip of REAL speech, falling back to synthetic noise.
+def _clip_filename(url: str) -> str:
+    """The engine picks its decoder from the extension, so the name has to survive the
+    URL: its path basename, without the query string a signed URL carries."""
+    name = urllib.parse.urlparse(url).path.rpartition("/")[2]
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".")
+    return name or "benchmark.wav"
+
+
+def benchmark_audio(seconds: float = REF_AUDIO_SECONDS,
+                    accepted: Iterable[str] = ("wav",),
+                    probe: Optional[Callable[[bytes], Optional[float]]] = None
+                    ) -> Tuple[bytes, str]:
+    """One reference clip of REAL speech, with the filename the engine should see.
 
     Fetched once per process, on first use -- which is the warmup request, before the
     timed runs -- and never at import, so a worker whose network is blocked still starts.
+
+    WAV is normalised: tiled or truncated to exactly `seconds`, so a benchmark request
+    weighs exactly one reference request. Anything else is used AS IS, because re-encoding
+    it would need a decoder this worker does not have: the score is still workload over
+    time, and the workload is priced from the clip's real duration, so it stays a valid
+    throughput -- it just is not exactly one reference request any more.
+
+    Falls back to synthetic noise, loudly. `accepted` comes from the route's own format
+    table, so this cannot offer the engine a container the worker would refuse.
     """
     global _speech_clip
     if _speech_clip is None:
         raw = _fetch_speech(BENCHMARK_AUDIO_URL)
-        _speech_clip = (_tile_wav(raw, seconds) or b"") if raw else b""
+        name = _clip_filename(BENCHMARK_AUDIO_URL)
+        ext = name.rpartition(".")[2].lower()
+        clip = None
+        if raw:
+            if raw.startswith(b"RIFF"):
+                tiled = _tile_wav(raw, seconds)
+                clip = (tiled, "benchmark.wav") if tiled else None
+            elif ext in set(accepted) and probe and probe(raw):
+                clip = (raw, name)
+                print(f"benchmark speech sample: {name} used as supplied "
+                      f"(only WAV can be resized to the {seconds:.0f}s reference, and "
+                      f"only WAV varies per request -- an engine that caches processed "
+                      f"audio by content hash may serve this one from its cache)",
+                      flush=True)
+        _speech_clip = clip or ()
         if not _speech_clip:
             # Warned here rather than at the fetch, so an unreadable download -- a 404
-            # page is bytes too, and wave will not open it -- is as loud as no download.
-            print("WARNING: benchmarking transcription on synthetic noise, which leaves "
-                  "the decoder idle and overstates real-speech throughput by roughly 2x "
-                  "(measured on whisper-large-v3)", flush=True)
+            # page is bytes too, and wave will not open it -- is as loud as no download,
+            # and says WHICH it was: an operator who just set BENCHMARK_AUDIO_URL needs
+            # to know their clip was rejected rather than their network.
+            if raw is None:
+                why = "could not be fetched"
+            elif ext not in set(accepted):
+                why = (f"has an extension this route does not accept ({ext or 'none'}; "
+                       f"expected one of {', '.join(sorted(accepted))})")
+            else:
+                why = f"is not audio this can read ({len(raw)} bytes from {BENCHMARK_AUDIO_URL})"
+            print(f"WARNING: the benchmark speech sample {why}; benchmarking "
+                  f"transcription on synthetic noise instead, which leaves the decoder "
+                  f"idle and overstates real-speech throughput by roughly 2x "
+                  f"(measured on whisper-large-v3)", flush=True)
+
     if not _speech_clip:
-        return synthetic_wav(seconds)
+        return synthetic_wav(seconds), "benchmark.wav"
+
+    data, name = _speech_clip
+    if not data.startswith(b"RIFF"):
+        return data, name           # cannot vary a container we cannot rebuild
     # Engines cache processed multimodal input by content hash, so the bytes must differ
     # per request or the benchmark measures the cache. Re-rolling the tail is enough and
     # leaves >99% of the audio -- and all of its speech content -- identical.
     tail = 4096
-    return _speech_clip[:-tail] + random.randbytes(min(tail, len(_speech_clip) // 2))
+    return data[:-tail] + random.randbytes(min(tail, len(data) // 2)), name
 
 
 # Benchmark payloads. Each is one reference-sized request (see core.py's workload units).

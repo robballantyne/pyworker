@@ -42,6 +42,24 @@ WAV_BYTES_PER_SECOND = WAV_RATE * 2     # 16-bit mono
 # weighs one reference request like every other candidate's.
 REF_AUDIO_SECONDS = 30.0
 
+# One request's worth of text to embed. MEASURED 2026-09-21 against BAAI/bge-small-en-v1.5.
+#
+# At 2000 chars the benchmark 400'd every request and the worker never became ready:
+# 1999 characters tokenised to 513 tokens, ONE over that model's 512 limit, and vLLM
+# rejects an over-length pooling input rather than truncating it.
+#
+# Sized for the SMALLEST mainstream encoder rather than the largest, because the tokens
+# per character VARY WITH THE DRAW and a reference near any limit passes or fails by
+# luck. Measured over five draws each: 500 chars -> 133-160 tokens, 600 -> 177-186,
+# 800 -> 232-248. all-MiniLM-L6 caps at 256, so 800 leaves 3% of margin and 600 leaves
+# 27%; the bge/e5/gte family at 512 has room either way.
+#
+# `truncate_prompt_tokens: -1` also works on vLLM and was measured returning 200 on the
+# over-length payload, but it is NOT sent: SGLang and llama.cpp serve this route too and
+# an engine that rejects an unknown field would fail the benchmark outright, which is
+# the failure being fixed. BENCHMARK_EMBED_CHARS is the escape hatch instead.
+REF_EMBED_CHARS = int(os.environ.get("BENCHMARK_EMBED_CHARS", 600))
+
 
 def resolve_model_name() -> Optional[str]:
     return next((v for var in _MODEL_NAME_VARS if (v := os.environ.get(var))), None)
@@ -255,7 +273,7 @@ def chat_benchmark_generator() -> dict:
 
 
 def embeddings_benchmark_generator() -> dict:
-    return {**_model(), "input": _words(2000)}
+    return {**_model(), "input": _words(REF_EMBED_CHARS)}
 
 
 def speech_benchmark_generator() -> dict:

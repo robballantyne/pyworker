@@ -22,6 +22,7 @@ from workers.openai.benchmark import (
     BENCHMARKS,
     DEFAULT_BENCHMARK_ROUTE,
     REF_AUDIO_SECONDS,
+    REF_EMBED_CHARS,
     completions_benchmark_generator,  # noqa: F401  (re-exported)
     resolve_model_name as _resolve_model_name,
     benchmark_audio,
@@ -108,7 +109,8 @@ REF_IMAGE_PIXELS = 1024 * 1024      # one image; also used when `size` is absent
 # REF_AUDIO_SECONDS: one uploaded clip. Defined in benchmark.py, where synthetic_wav()
 # has to produce exactly one of them.
 REF_SPEECH_CHARS = 500              # text to synthesise; each clone reference adds one
-REF_EMBED_CHARS = 2000              # text to embed
+# REF_EMBED_CHARS: text to embed. Defined in benchmark.py, where the generator has
+# to produce exactly one of them.
 CHARS_PER_TOKEN = 4                 # sizes pre-tokenised embedding input
 MAX_IMAGES = 10                     # the spec's ceiling on `n`
 MAX_IMAGE_SIDE = 16384

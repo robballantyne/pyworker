@@ -70,6 +70,7 @@ as an endpoint that never becomes ready, not as one that serves wrong answers.
 | `BENCHMARK_SPEECH_VOICE` | none | `voice` to send when benchmarking speech. |
 | `BENCHMARK_AUDIO_URL` | a public speech sample | Clip the transcription benchmark transcribes — point it at audio like your own traffic, since language, noise and speech density drive the decode work the score depends on. Any format this worker accepts. WAV is resized to the 30s reference and varied per request; other containers are sent as supplied and priced by their real duration. Fetched once at first use; on failure it falls back to synthetic noise, which leaves the decoder idle and overstates real-speech throughput by roughly 2x. |
 | `BENCHMARK_AUDIO_TIMEOUT` | 20 | Seconds allowed for that fetch. |
+| `BENCHMARK_EMBED_CHARS` | 600 | Characters the embeddings benchmark sends, and what one reference embedding request means. Sized for a 256-token encoder; raise it for a long-context model, lower it if an unusually small one refuses the payload. |
 | `WORKER_MAX_UPLOAD_BYTES` | 26214400 | Largest single uploaded file (decoded). |
 | `WORKER_MAX_REQUEST_UPLOAD_BYTES` | 67108864 | Largest total of all uploads and inline references in one request. |
 

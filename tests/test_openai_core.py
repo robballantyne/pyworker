@@ -315,20 +315,35 @@ class TestEmbeddingsWorkload(unittest.TestCase):
         self.calc = handlers()["/v1/embeddings"].workload_calculator
 
     def test_all_four_input_shapes_land_on_one_scale(self):
-        # 2000 characters, or 500 tokens at four characters each, is one request.
+        """One reference request of text, however the caller shapes it: a string, a
+        batch, pre-tokenised ids, or a batch of those."""
+        from workers.openai.benchmark import REF_EMBED_CHARS
+        chars, tokens = REF_EMBED_CHARS, REF_EMBED_CHARS // core.CHARS_PER_TOKEN
         for label, value in [
-            ("string",          "x" * 2000),
-            ("list of strings", ["x" * 1000, "x" * 1000]),
-            ("token array",     list(range(500))),
-            ("array of arrays", [list(range(250)), list(range(250))]),
+            ("string",          "x" * chars),
+            ("list of strings", ["x" * (chars // 2), "x" * (chars // 2)]),
+            ("token array",     list(range(tokens))),
+            ("array of arrays", [list(range(tokens // 2)), list(range(tokens // 2))]),
         ]:
             with self.subTest(label):
                 self.assertEqual(self.calc({"input": value}), ONE_REQUEST)
 
     def test_a_batch_costs_more_than_one_item(self):
-        one = self.calc({"input": ["x" * 2000]})
-        three = self.calc({"input": ["x" * 2000] * 3})
+        from workers.openai.benchmark import REF_EMBED_CHARS
+        one = self.calc({"input": ["x" * REF_EMBED_CHARS]})
+        three = self.calc({"input": ["x" * REF_EMBED_CHARS] * 3})
         self.assertEqual(three, 3 * one)
+
+    def test_the_benchmark_payload_fits_a_short_context_encoder(self):
+        """THE defect this sizing exists for, measured on BAAI/bge-small-en-v1.5: at
+        2000 chars the payload tokenised to 513 against a 512 limit, vLLM refused it,
+        and the worker never became ready. Tokens per character vary with the draw
+        (500 chars measured 133-160 tokens over five draws), so the reference is sized
+        for all-MiniLM-L6's 256 rather than the 512 of the bge/e5/gte family."""
+        from workers.openai.benchmark import REF_EMBED_CHARS, embeddings_benchmark_generator
+        worst_case_tokens = len(embeddings_benchmark_generator()["input"]) / 3.1
+        self.assertLess(worst_case_tokens, 256 * 0.8,
+                        f"{REF_EMBED_CHARS} chars can tokenise past a 256-token encoder")
 
     def test_missing_or_null_input_is_the_floor(self):
         self.assertEqual(self.calc({}), FLOOR)

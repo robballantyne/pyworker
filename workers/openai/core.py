@@ -454,6 +454,14 @@ class TranscriptionPayload(_UploadPayload):
                                  REF_AUDIO_SECONDS)
 
 
+class TranslationPayload(TranscriptionPayload):
+    """/v1/audio/translations: the same upload shape as transcriptions -- a file and a
+    model -- so it inherits parsing, the benchmark clip and duration pricing. Its own
+    class so an error names the route the caller actually used."""
+
+    ROUTE = "/v1/audio/translations"
+
+
 class ImageEditPayload(_UploadPayload):
     """base64 in, multipart out, for /v1/images/edits.
 
@@ -672,7 +680,7 @@ def build_config(defaults: EngineDefaults, model_server_url: str = MODEL_SERVER_
         # the image routes -- so it could not be tested live against anything, and a
         # route with no possible backend is unproven code advertised as a feature.
         route("/v1/audio/transcriptions", payload_class=TranscriptionPayload),
-        route("/v1/audio/translations", payload_class=TranscriptionPayload),
+        route("/v1/audio/translations", payload_class=TranslationPayload),
     ]
     # Routes an engine does not implement answer 404 from behind the worker.
 

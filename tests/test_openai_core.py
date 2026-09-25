@@ -176,9 +176,16 @@ class TestHandlerTable(unittest.TestCase):
                 self.assertIsNotNone(handlers()[route].request_parser)
 
     def test_translations_shares_the_transcription_payload(self):
+        """Same upload shape, so the same parsing, clip and duration pricing -- by
+        inheritance, so a translation error can still name its own route."""
         h = handlers()
-        self.assertIs(h["/v1/audio/translations"].payload_class,
-                      h["/v1/audio/transcriptions"].payload_class)
+        self.assertTrue(issubclass(h["/v1/audio/translations"].payload_class,
+                                   h["/v1/audio/transcriptions"].payload_class))
+        for attr in ("from_json_msg", "count_workload", "generate_payload_multipart",
+                     "for_test"):
+            with self.subTest(attr):
+                self.assertNotIn(attr, core.TranslationPayload.__dict__,
+                                 "translations must inherit this, not diverge from it")
 
     def test_exactly_one_route_carries_a_benchmark(self):
         """The SDK requires exactly one, which is why this worker needs no SDK change
@@ -192,10 +199,10 @@ class TestHandlerTable(unittest.TestCase):
         self.assertEqual(carrying, ["/v1/audio/transcriptions"])
 
     def test_a_route_that_cannot_be_benchmarked_is_refused(self):
-        # Translations is the one served route with no benchmark of its own: the models
-        # that serve it serve transcriptions too, and that is the route to benchmark.
-        # (This used /v1/images/edits until edits gained a benchmark for edit-only models.)
-        with mock.patch.dict(os.environ, {"BENCHMARK_ROUTE": "/v1/audio/translations"}):
+        # Every SERVED route can now be benchmarked, so the example is a route that is
+        # not served at all -- variations, removed because no engine implements it. (This
+        # used edits, then translations, until each gained a benchmark.)
+        with mock.patch.dict(os.environ, {"BENCHMARK_ROUTE": "/v1/images/variations"}):
             with self.assertRaises(RuntimeError):
                 handlers()
 
@@ -495,7 +502,9 @@ class TestTranscriptionBenchmarkPayload(unittest.TestCase):
                  "/v1/images/edits":
                      lambda _b: core.ImageEditPayload.for_test().count_workload(),
                  "/v1/audio/transcriptions":
-                     lambda _b: TranscriptionPayload.for_test().count_workload()}
+                     lambda _b: TranscriptionPayload.for_test().count_workload(),
+                 "/v1/audio/translations":
+                     lambda _b: core.TranslationPayload.for_test().count_workload()}
         for route, b in BENCHMARKS.items():
             with self.subTest(route):
                 body = b.generator() if b.generator else None
@@ -570,6 +579,23 @@ class TestEditBenchmark(unittest.TestCase):
         image benchmark stops weighing one reference request."""
         from workers.openai.benchmark import REF_IMAGE_SIDE
         self.assertEqual(REF_IMAGE_SIDE ** 2, core.REF_IMAGE_PIXELS)
+
+
+class TestEveryServedRouteCanBeBenchmarked(unittest.TestCase):
+    def test_no_served_route_lacks_a_benchmark(self):
+        """A deployment can narrow OPENAI_ROUTES to any single route; if that route had
+        no benchmark it could never become ready. Edit-only and translation-only are
+        the two cases this closed."""
+        with mock.patch.dict(os.environ, {"OPENAI_ROUTES": ""}):
+            served = set(handlers())
+        self.assertEqual(served - set(BENCHMARKS), set(),
+                         "served routes a deployment could not benchmark on")
+
+    def test_translations_errors_name_translations(self):
+        self.assertEqual(core.TranslationPayload.ROUTE, "/v1/audio/translations")
+        with mock.patch.dict(os.environ, {"OPENAI_ROUTES": ""}):
+            h = handlers()["/v1/audio/translations"]
+        self.assertIs(h.payload_class, core.TranslationPayload)
 
 
 class TestRequestBudget(unittest.TestCase):

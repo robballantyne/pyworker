@@ -316,6 +316,12 @@ SCENARIOS = [
     ("engine serving only transcription", {"/v1/audio/transcriptions",
                                            "/v1/audio/translations"}, 13100, "asr",
      "/v1/audio/transcriptions"),
+    # A deployment exposing only translations, and an edit-only image model. Each had no
+    # route it could both serve and benchmark, so neither could ever become ready.
+    ("engine serving only translation", {"/v1/audio/translations"}, 13200, "only",
+     "/v1/audio/translations"),
+    ("engine serving only image edits", {"/v1/images/edits"}, 13300, "only",
+     "/v1/images/edits"),
 ]
 
 
@@ -395,6 +401,8 @@ async def run_worker(model_log, workdir, checks):
         print(f"worker       : http://127.0.0.1:{WORKER_PORT}\n")
         if checks == "asr":
             return await asr_only_checks(workdir)
+        if checks == "only":
+            return await single_route_checks(workdir, os.environ["BENCHMARK_ROUTE"])
         return await requests(workdir)
     finally:
         task.cancel()
@@ -476,6 +484,24 @@ async def asr_only_checks(workdir):
                    engine_hits.get("/v1/completions", 0) <= 1))
     checks.append(("the benchmark ran on transcriptions",
                    engine_hits.get("/v1/audio/transcriptions", 0) >= 5))
+    return report(checks)
+
+
+async def single_route_checks(workdir, route):
+    """An engine serving exactly one route: the worker must benchmark on it, reach a
+    score, and never probe a route the engine does not serve."""
+    checks = []
+    async with ClientSession() as s:
+        if not await wait_for_worker(s):
+            print("worker never became reachable")
+            return 1
+        await wait_for_benchmark()
+    benchmark_summary(workdir, checks)
+    others = {p: n for p, n in engine_hits.items() if p != route and n}
+    checks.append((f"the benchmark ran on {route}", engine_hits.get(route, 0) >= 1))
+    checks.append(("no other route was ever called", not others))
+    if others:
+        print("  unexpected engine calls:", others)
     return report(checks)
 
 

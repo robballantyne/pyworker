@@ -348,5 +348,10 @@ BENCHMARKS = {
     # on generations (which its model does not serve), so it never became ready.
     "/v1/images/edits": Benchmark(2, 1),
     "/v1/audio/transcriptions": Benchmark(4, 2),
+    # Its own entry rather than "benchmark transcriptions instead": a deployment that
+    # exposes only translations (OPENAI_ROUTES) would otherwise have no route it could
+    # both serve and benchmark. Same clip, same weight -- the encoder work is identical
+    # and the decoder emits text of similar length either way.
+    "/v1/audio/translations": Benchmark(4, 2),
 }
 DEFAULT_BENCHMARK_ROUTE = "/v1/completions"

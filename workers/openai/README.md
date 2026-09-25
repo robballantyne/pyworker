@@ -65,7 +65,7 @@ as an endpoint that never becomes ready, not as one that serves wrong answers.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `BENCHMARK_ROUTE` | `/v1/completions` | The route to benchmark. It must be served, and one of: completions, chat, embeddings, speech, image generations, transcriptions. |
+| `BENCHMARK_ROUTE` | `/v1/completions` | The route to benchmark. It must be served, and one of: completions, chat, embeddings, speech, image generations, image edits, transcriptions. An edit-only model must use `/v1/images/edits`; the edit benchmark sends a synthetic 1024x1024 input. |
 | `OPENAI_ROUTES` | all | Comma-separated routes to serve. Must include `BENCHMARK_ROUTE`. |
 | `BENCHMARK_SPEECH_VOICE` | none | `voice` to send when benchmarking speech. |
 | `BENCHMARK_AUDIO_URL` | a public speech sample | Clip the transcription benchmark transcribes — point it at audio like your own traffic, since language, noise and speech density drive the decode work the score depends on. Any format this worker accepts. WAV is resized to the 30s reference and varied per request; other containers are sent as supplied and priced by their real duration. Fetched once at first use; on failure it falls back to synthetic noise, which leaves the decoder idle and overstates real-speech throughput by roughly 2x. |

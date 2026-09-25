@@ -192,7 +192,10 @@ class TestHandlerTable(unittest.TestCase):
         self.assertEqual(carrying, ["/v1/audio/transcriptions"])
 
     def test_a_route_that_cannot_be_benchmarked_is_refused(self):
-        with mock.patch.dict(os.environ, {"BENCHMARK_ROUTE": "/v1/images/edits"}):
+        # Translations is the one served route with no benchmark of its own: the models
+        # that serve it serve transcriptions too, and that is the route to benchmark.
+        # (This used /v1/images/edits until edits gained a benchmark for edit-only models.)
+        with mock.patch.dict(os.environ, {"BENCHMARK_ROUTE": "/v1/audio/translations"}):
             with self.assertRaises(RuntimeError):
                 handlers()
 
@@ -489,6 +492,8 @@ class TestTranscriptionBenchmarkPayload(unittest.TestCase):
                  "/v1/embeddings": core._embeddings_workload,
                  "/v1/audio/speech": core._speech_workload,
                  "/v1/images/generations": core._image_workload,
+                 "/v1/images/edits":
+                     lambda _b: core.ImageEditPayload.for_test().count_workload(),
                  "/v1/audio/transcriptions":
                      lambda _b: TranscriptionPayload.for_test().count_workload()}
         for route, b in BENCHMARKS.items():
@@ -497,6 +502,74 @@ class TestTranscriptionBenchmarkPayload(unittest.TestCase):
                 weight = weigh[route](body)
                 self.assertGreaterEqual(weight, 0.5 * core.BENCHMARK_MAX_TOKENS)
                 self.assertLessEqual(weight, 2 * core.BENCHMARK_MAX_TOKENS)
+
+
+class TestEditBenchmark(unittest.TestCase):
+    """Some models are edit-only. Without an edits benchmark such a deployment could
+    neither benchmark on edits (BENCHMARK_ROUTE refused it at startup) nor on
+    generations (which its model does not serve), so it could never become ready."""
+
+    @staticmethod
+    def _decode(png: bytes):
+        import struct, zlib
+        assert png[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG"
+        pos, chunks = 8, {}
+        while pos < len(png):
+            n = struct.unpack(">I", png[pos:pos + 4])[0]
+            kind, data = png[pos + 4:pos + 8], png[pos + 8:pos + 8 + n]
+            crc = struct.unpack(">I", png[pos + 8 + n:pos + 12 + n])[0]
+            assert crc == zlib.crc32(kind + data) & 0xFFFFFFFF, f"bad CRC on {kind}"
+            chunks.setdefault(kind, b"")
+            chunks[kind] += data
+            pos += 12 + n
+        w, h, depth, colour = struct.unpack(">IIBB", chunks[b"IHDR"][:10])
+        return w, h, depth, colour, zlib.decompress(chunks[b"IDAT"])
+
+    def test_edits_can_be_the_benchmark_route(self):
+        with mock.patch.dict(os.environ, {"OPENAI_ROUTES": "",
+                                          "BENCHMARK_ROUTE": "/v1/images/edits"}):
+            hs = handlers()
+        self.assertIsNotNone(hs["/v1/images/edits"].benchmark_config)
+        self.assertIsNone(hs["/v1/images/generations"].benchmark_config,
+                          "an edit-only deployment must not be benchmarked on generations")
+
+    def test_the_input_is_a_valid_reference_sized_png(self):
+        from workers.openai.benchmark import REF_IMAGE_SIDE, synthetic_png
+        w, h, depth, colour, raw = self._decode(synthetic_png())
+        self.assertEqual((w, h, depth, colour), (REF_IMAGE_SIDE, REF_IMAGE_SIDE, 8, 2))
+        self.assertEqual(len(raw), h * (1 + w * 3), "scanlines do not match the header")
+        pixels = bytes(b for i, b in enumerate(raw) if i % (1 + w * 3))
+        self.assertGreater(len(set(pixels)), 200, "the image is effectively uniform")
+
+    def test_the_input_is_re_rolled_per_call(self):
+        """Engines cache processed multimodal input by content hash; a fixed image would
+        measure the cache after the first request."""
+        from workers.openai.benchmark import synthetic_png
+        self.assertNotEqual(synthetic_png(), synthetic_png())
+
+    def test_the_input_is_cheap_to_build(self):
+        """for_test() runs inside the SDK's timed window, so its cost is charged to the
+        engine -- synthetic_wav once cost 41% of a real benchmark before it was tiled."""
+        import time
+        t = time.perf_counter()
+        for _ in range(4):
+            core.ImageEditPayload.for_test()
+        self.assertLess(time.perf_counter() - t, 0.5)
+
+    def test_for_test_sends_an_image_part_and_the_fields(self):
+        body = core.ImageEditPayload.for_test().generate_payload_multipart()
+        self.assertIn("image", body)
+        filename, data, ctype = body["image"][0]
+        self.assertEqual(ctype, "image/png")
+        self.assertEqual(data[:4], b"\x89PNG")
+        self.assertTrue(body.get("prompt"))
+        self.assertEqual(body.get("n"), 1)
+
+    def test_reference_side_and_pixels_agree(self):
+        """Two constants in two modules describe one reference image; if they drift, an
+        image benchmark stops weighing one reference request."""
+        from workers.openai.benchmark import REF_IMAGE_SIDE
+        self.assertEqual(REF_IMAGE_SIDE ** 2, core.REF_IMAGE_PIXELS)
 
 
 class TestRequestBudget(unittest.TestCase):

@@ -16,8 +16,10 @@ import random
 import re
 import sys
 import urllib.parse
+import struct
 import urllib.request
 import wave
+import zlib
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Callable, Iterable, Optional, Tuple
@@ -33,6 +35,9 @@ nltk.download("words")
 WORD_LIST = nltk.corpus.words.words()
 
 WAV_RATE = 16000
+# One reference image, per side. core.REF_IMAGE_PIXELS is this squared, and a test
+# pins the two together: every image benchmark must weigh one reference request.
+REF_IMAGE_SIDE = 1024
 WAV_BYTES_PER_SECOND = WAV_RATE * 2     # 16-bit mono
 # One uploaded clip, the reference the transcription workload is counted against, in
 # SECONDS of audio rather than bytes: the same megabyte is 26 s of 320 kbps MP3 or 349 s
@@ -86,6 +91,36 @@ def _voice() -> dict:
     # benchmark send none unless told which to use.
     voice = os.environ.get("BENCHMARK_SPEECH_VOICE")
     return {"voice": voice} if voice else {}
+
+
+def synthetic_png(side: int = REF_IMAGE_SIDE, tile: int = 64) -> bytes:
+    """A random RGB PNG, one reference image in size, built from the stdlib alone.
+
+    The input to the edit benchmark. Synthetic rather than fetched, unlike the speech
+    clip, and deliberately: a transcription's cost depends on the audio (real speech and
+    noise differed about 2x), but a diffusion edit runs a fixed number of steps at a
+    fixed resolution whatever the pixels are. Measured, not assumed: FLUX.2-klein-4B on
+    an RTX PRO 6000, five alternating 1024x1024 edits each, engine-direct -- this noise
+    median 11.526s, a real photograph median 11.564s, ratio 1.003.
+
+    Built by tiling one random `tile`-pixel block, for the reason synthetic_wav tiles:
+    for_test() runs inside the SDK's timed window, so its cost is charged to the engine.
+    A tiled 1024x1024 builds in about 11 ms and compresses to about 0.2 MB.
+
+    Re-rolled per call and that is load-bearing: engines cache processed multimodal
+    input by content hash, so an image that was byte-identical every request would
+    measure the cache after the first one.
+    """
+    rows = [os.urandom(tile * 3) * (side // tile) for _ in range(tile)]
+    raw = b"".join(b"\x00" + rows[y % tile] for y in range(side))   # filter 0 per row
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    header = struct.pack(">IIBBBBB", side, side, 8, 2, 0, 0, 0)   # 8-bit RGB
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(raw, 1)) + chunk(b"IEND", b""))
 
 
 def synthetic_wav(seconds: float = REF_AUDIO_SECONDS,
@@ -281,7 +316,7 @@ def speech_benchmark_generator() -> dict:
 
 
 def images_benchmark_generator() -> dict:
-    return {**_model(), "prompt": _words(60), "size": "1024x1024", "n": 1}
+    return {**_model(), "prompt": _words(60), "size": f"{REF_IMAGE_SIDE}x{REF_IMAGE_SIDE}", "n": 1}
 
 
 def transcription_form(audio: bytes) -> aiohttp.FormData:
@@ -307,7 +342,11 @@ BENCHMARKS = {
     "/v1/embeddings": Benchmark(10, 3, embeddings_benchmark_generator),
     "/v1/audio/speech": Benchmark(4, 2, speech_benchmark_generator),
     "/v1/images/generations": Benchmark(2, 1, images_benchmark_generator),
-    # the payload class builds this one, because it is an upload
+    # the payload class builds these, because they are uploads. Edits needs its own
+    # benchmark because some models are edit-only: without it such a deployment
+    # could neither benchmark on edits (BENCHMARK_ROUTE refused it at startup) nor
+    # on generations (which its model does not serve), so it never became ready.
+    "/v1/images/edits": Benchmark(2, 1),
     "/v1/audio/transcriptions": Benchmark(4, 2),
 }
 DEFAULT_BENCHMARK_ROUTE = "/v1/completions"

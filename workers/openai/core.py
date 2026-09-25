@@ -23,9 +23,12 @@ from workers.openai.benchmark import (
     DEFAULT_BENCHMARK_ROUTE,
     REF_AUDIO_SECONDS,
     REF_EMBED_CHARS,
+    REF_IMAGE_SIDE,
     completions_benchmark_generator,  # noqa: F401  (re-exported)
     resolve_model_name as _resolve_model_name,
     benchmark_audio,
+    synthetic_png,
+    _words,
 )
 
 
@@ -466,6 +469,19 @@ class ImageEditPayload(_UploadPayload):
     def __init__(self, fields: Dict[str, Any], files: Dict[str, list]):
         self.fields = fields
         self.files = files
+
+    @classmethod
+    def for_test(cls) -> "ImageEditPayload":
+        """One reference-sized edit: a 1024x1024 input and a 1024x1024 output.
+
+        Weighs one reference request by the same _image_workload generations uses, so an
+        edit-only deployment's score is in the same unit as every other route's."""
+        side = REF_IMAGE_SIDE
+        fields: Dict[str, Any] = {"prompt": _words(60), "size": f"{side}x{side}", "n": 1}
+        _fill_model(fields)
+        part = _file_part(synthetic_png(side), DEFAULT_IMAGE_FILENAME,
+                          DEFAULT_IMAGE_FILENAME, IMAGE_TYPES, "filename")
+        return cls(fields=fields, files={"image": [part]})
 
     @classmethod
     def from_json_msg(cls, json_msg: Any) -> "ImageEditPayload":

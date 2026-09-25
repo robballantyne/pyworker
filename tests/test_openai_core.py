@@ -554,7 +554,14 @@ class TestReferences(unittest.TestCase):
 class TestServedRoutes(unittest.TestCase):
     ALL = {"/v1/completions", "/v1/chat/completions", "/v1/audio/speech",
            "/v1/embeddings", "/v1/images/generations", "/v1/images/edits",
-           "/v1/images/variations", "/v1/audio/transcriptions", "/v1/audio/translations"}
+           "/v1/audio/transcriptions", "/v1/audio/translations"}
+
+    def test_variations_is_not_served(self):
+        """No engine serves /v1/images/variations: vLLM-Omni v0.28.0 registers generations
+        and edits but not variations, and vLLM, SGLang and llama.cpp implement no image
+        routes. It could not be live-tested against anything, so it is not advertised."""
+        with mock.patch.dict(os.environ, {"OPENAI_ROUTES": ""}):
+            self.assertNotIn("/v1/images/variations", set(handlers()))
 
     def test_all_routes_by_default(self):
         with mock.patch.dict(os.environ, {"OPENAI_ROUTES": ""}):

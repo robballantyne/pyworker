@@ -452,7 +452,7 @@ class TranscriptionPayload(_UploadPayload):
 
 
 class ImageEditPayload(_UploadPayload):
-    """base64 in, multipart out, for /v1/images/edits and /variations.
+    """base64 in, multipart out, for /v1/images/edits.
 
         {"image": "<b64>" | ["<b64>", ...], "filename": "a.png" | [...],
          "mask": "<b64>", "mask_filename": "m.png", "prompt": "..."}
@@ -461,7 +461,7 @@ class ImageEditPayload(_UploadPayload):
     required.
     """
 
-    ROUTE = "image edits and variations"
+    ROUTE = "image edits"
 
     def __init__(self, fields: Dict[str, Any], files: Dict[str, list]):
         self.fields = fields
@@ -569,7 +569,7 @@ def _embeddings_workload(data: Dict[str, Any]) -> float:
     return _in_request_units(chars, REF_EMBED_CHARS)
 
 
-UPLOAD_ROUTES = ("/v1/images/edits", "/v1/images/variations",
+UPLOAD_ROUTES = ("/v1/images/edits",
                  "/v1/audio/transcriptions", "/v1/audio/translations")
 
 
@@ -592,7 +592,7 @@ def _served_routes(handlers: List[HandlerConfig]) -> List[HandlerConfig]:
 
     OPENAI_ROUTES (comma-separated) narrows them; unset serves all. The worker is pulled
     from main by every instance at boot, so on an SDK that cannot send multipart it
-    degrades instead of failing: the four upload routes are not served, and answer 404.
+    degrades instead of failing: the three upload routes are not served, and answer 404.
     """
     known = {h.route for h in handlers}
     wanted = {r.strip() for r in os.environ.get("OPENAI_ROUTES", "").split(",") if r.strip()}
@@ -651,7 +651,10 @@ def build_config(defaults: EngineDefaults, model_server_url: str = MODEL_SERVER_
               request_parser=request_parser),
         # Payload classes apply their own parsing; request_parser is ignored with them.
         route("/v1/images/edits", payload_class=ImageEditPayload),
-        route("/v1/images/variations", payload_class=ImageEditPayload),
+        # No /v1/images/variations: no engine serves it. vLLM-Omni registers generations
+        # and edits but not variations, and vLLM, SGLang and llama.cpp implement none of
+        # the image routes -- so it could not be tested live against anything, and a
+        # route with no possible backend is unproven code advertised as a feature.
         route("/v1/audio/transcriptions", payload_class=TranscriptionPayload),
         route("/v1/audio/translations", payload_class=TranscriptionPayload),
     ]

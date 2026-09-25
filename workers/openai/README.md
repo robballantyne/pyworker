@@ -13,11 +13,11 @@ All worker logic lives in `core.py`. The per-engine backends `vllm`, `sglang` an
 | `/v1/audio/speech` | JSON (voice-clone `ref_audio`: http(s) URL or base64) | audio bytes |
 | `/v1/audio/transcriptions`, `/v1/audio/translations` | JSON with the file base64'd in `file` | JSON or text |
 | `/v1/images/generations` | JSON | JSON |
-| `/v1/images/edits`, `/v1/images/variations` | JSON with `image` (base64, or a list), or `url` | JSON |
+| `/v1/images/edits` | JSON with `image` (base64, or a list), or `url` | JSON |
 
 The worker envelope is JSON, so uploads arrive base64-encoded (`file`, `image`, `mask`) and
 are sent to the engine as multipart form data. `filename` / `mask_filename` set the file
-type. Requires a `vastai` SDK with multipart support; on an older SDK the four upload
+type. Requires a `vastai` SDK with multipart support; on an older SDK the three upload
 routes are not served.
 
 **All routes are served by default.** The worker does not know what the loaded model

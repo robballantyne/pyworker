@@ -4,6 +4,71 @@ This is the base PyWorker for OpenAI compatible inference servers.  See the [Ser
 
 All worker logic lives in `core.py`. The per-engine backends `vllm`, `sglang` and `llama` are thin adapters over this core, differing only in their baked default log grammar (every value is env-overridable by the image). `BACKEND=openai` is a backwards-compatible **alias for `vllm`** — `openai/worker.py` runs the vLLM worker directly, so there is one definition of the vLLM defaults and no second copy to drift; templates declaring `openai` must run a pyworker new enough to contain this split. The demo test client in `client.py` is shared — run it as `python -m workers.openai.client` regardless of which engine backend you deployed.
 
+## Routes
+
+| Route | Request | Response |
+|---|---|---|
+| `/v1/completions`, `/v1/chat/completions` | JSON | JSON or SSE |
+| `/v1/embeddings` | JSON | JSON |
+| `/v1/audio/speech` | JSON (voice-clone `ref_audio`: http(s) URL or `data:` URI) | audio bytes |
+| `/v1/audio/transcriptions`, `/v1/audio/translations` | JSON with the file base64'd in `file` | JSON or text |
+| `/v1/images/generations` | JSON | JSON |
+| `/v1/images/edits` | JSON with `image` (base64, or a list), or `url` (http(s) or `data:`) | JSON |
+
+The worker envelope is JSON, so uploads arrive base64-encoded (`file`, `image`, `mask`) and
+are sent to the engine as multipart form data. `filename` / `mask_filename` set the file
+type. Requires a `vastai` SDK with multipart support; on an older SDK the three upload
+routes are not served.
+
+References (`url` on edits, `ref_audio` on speech) are passed to the engine, not uploaded,
+so they must be an http(s) URL or a `data:` URI; anything else, a file path included, is
+refused. http(s) URLs are fetched by the engine from inside the instance and are not
+filtered here, as with `image_url` on chat.
+
+vLLM-Omni reads an edit mask from `mask_image`, not the `mask` the OpenAI API names, so
+a `mask` is not applied there.
+
+**Served by default: completions and chat, as before, plus the `BENCHMARK_ROUTE`.** Other
+routes are opt-in with `OPENAI_ROUTES`, since the worker cannot know what the loaded model
+supports. A route the model does not serve returns the engine's 404, and is still counted
+as work against the queue estimate, so list only the routes the model serves.
+
+What each engine actually serves depends on the engine and the loaded model:
+
+| Engine | Typically serves |
+|---|---|
+| vLLM, SGLang, llama.cpp | completions, chat; embeddings with an embedding model |
+| vLLM with Whisper or Voxtral | transcriptions, translations (and no completions at all) |
+| vLLM-Omni (`--omni`) | image generations and edits, speech, alongside text |
+
+## Benchmarking
+
+`BENCHMARK_ROUTE` names the route to benchmark, and defaults to `/v1/completions`, so an
+LLM deployment benchmarks exactly what it did before. Any route above can be benchmarked,
+so a deployment serving only one (an edit-only image model, say) can still become ready.
+Every benchmark request weighs one reference request, so the score means the same thing
+whichever route is benchmarked.
+
+If the model does not serve the benchmarked route, the benchmark fails and the worker does
+not become ready. The startup log names the route and the variable to change:
+
+```
+benchmarking: /v1/completions. If this model does not serve it, set BENCHMARK_ROUTE to
+the route it does.
+```
+
+The transcription and translation benchmarks send real speech -- a bundled 10.7 s sample,
+tiled to 30 s -- because noise leaves the decoder idle and overstates throughput.
+
+## Settings
+
+| Variable | Default | Effect |
+|---|---|---|
+| `BENCHMARK_ROUTE` | `/v1/completions` | The route to benchmark. Served by default; the worker refuses to start if `OPENAI_ROUTES` leaves it out. |
+| `OPENAI_ROUTES` | completions, chat | Comma-separated routes to serve. Must include `BENCHMARK_ROUTE`. |
+| `BENCHMARK_SPEECH_VOICE` | none | `voice` to send when benchmarking speech. |
+| `BENCHMARK_EMBED_CHARS` | 600 | Characters the embeddings benchmark sends. Sized for a 256-token encoder; raise it for a long-context model. |
+
 ## Instance Setup
 
 1. Pick a template
